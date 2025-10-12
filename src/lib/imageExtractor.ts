@@ -51,7 +51,7 @@ export const extractAllProductImages = async (firstImageUrl: string): Promise<st
     return [];
   }
 
-  const MAX_CHECKS = 7;
+  const MAX_CHECKS = 10;
   
   // Create all URLs to check in parallel
   const productUrls = Array.from({ length: MAX_CHECKS }, (_, i) => 

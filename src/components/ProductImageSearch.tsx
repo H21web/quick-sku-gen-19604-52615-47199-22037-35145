@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
 import { Search, X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Download } from 'lucide-react';
@@ -19,6 +19,9 @@ export const ProductImageSearch = () => {
   const [loading, setLoading] = useState(false);
   const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
   const [zoom, setZoom] = useState(1);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const imageRef = useRef<HTMLDivElement>(null);
+  const touchStartRef = useRef<{ distance: number; zoom: number; x: number; y: number } | null>(null);
 
   const handleSearch = async () => {
     if (!productId.trim()) {
@@ -56,25 +59,30 @@ export const ProductImageSearch = () => {
         return;
       }
 
-      // Phase 1: show direct results immediately
+      // Get all initial links
       const initialLinks: string[] = data.items.map((item: any) => item.link);
       const initialUnique = Array.from(new Set(initialLinks));
-      setExtractedImages(initialUnique);
-      toast.success(`Found ${initialUnique.length} images (optimizing...)`);
-
-      // Phase 2: refine JioMart images in background to gather all variants
+      
+      // Extract all JioMart images upfront
       const jiomartLinks = initialUnique.filter((url) =>
         url.includes('jiomart.com/images/product')
       );
 
-      Promise.allSettled(jiomartLinks.map((url) => extractAllProductImages(url)))
-        .then((results) => {
-          const more = results.flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
-          if (more.length > 0) {
-            setExtractedImages((prev) => Array.from(new Set([...prev, ...more])));
-          }
-        })
-        .catch((e) => console.error('Background extraction error:', e));
+      toast.info('Extracting all product images...');
+
+      // Wait for all extractions to complete
+      const extractionResults = await Promise.allSettled(
+        jiomartLinks.map((url) => extractAllProductImages(url))
+      );
+      
+      const allExtractedImages = extractionResults.flatMap((r) => 
+        (r.status === 'fulfilled' ? r.value : [])
+      );
+
+      // Combine all unique images
+      const allImages = Array.from(new Set([...initialUnique, ...allExtractedImages]));
+      setExtractedImages(allImages);
+      toast.success(`Found ${allImages.length} images`);
     } catch (error) {
       toast.error('Failed to fetch product images');
       console.error('Error:', error);
@@ -86,17 +94,20 @@ export const ProductImageSearch = () => {
   const openImage = (index: number) => {
     setSelectedImageIndex(index);
     setZoom(1);
+    setPosition({ x: 0, y: 0 });
   };
 
   const closeImage = () => {
     setSelectedImageIndex(null);
     setZoom(1);
+    setPosition({ x: 0, y: 0 });
   };
 
   const goToPrevious = () => {
     if (selectedImageIndex !== null && selectedImageIndex > 0) {
       setSelectedImageIndex(selectedImageIndex - 1);
       setZoom(1);
+      setPosition({ x: 0, y: 0 });
     }
   };
 
@@ -104,6 +115,7 @@ export const ProductImageSearch = () => {
     if (selectedImageIndex !== null && selectedImageIndex < extractedImages.length - 1) {
       setSelectedImageIndex(selectedImageIndex + 1);
       setZoom(1);
+      setPosition({ x: 0, y: 0 });
     }
   };
 
@@ -114,6 +126,45 @@ export const ProductImageSearch = () => {
   const handleZoomOut = () => {
     setZoom(prev => Math.max(prev - 0.25, 0.5));
   };
+
+  // Touch event handlers for pinch-to-zoom
+  const getTouchDistance = (touch1: React.Touch, touch2: React.Touch) => {
+    const dx = touch1.clientX - touch2.clientX;
+    const dy = touch1.clientY - touch2.clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      const distance = getTouchDistance(e.touches[0], e.touches[1]);
+      touchStartRef.current = {
+        distance,
+        zoom,
+        x: position.x,
+        y: position.y
+      };
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length === 2 && touchStartRef.current) {
+      e.preventDefault();
+      const distance = getTouchDistance(e.touches[0], e.touches[1]);
+      const scale = distance / touchStartRef.current.distance;
+      const newZoom = Math.min(Math.max(touchStartRef.current.zoom * scale, 0.5), 3);
+      setZoom(newZoom);
+    }
+  };
+
+  const handleTouchEnd = () => {
+    touchStartRef.current = null;
+  };
+
+  useEffect(() => {
+    if (zoom === 1) {
+      setPosition({ x: 0, y: 0 });
+    }
+  }, [zoom]);
 
   return (
     <div className="space-y-4">
@@ -210,12 +261,23 @@ export const ProductImageSearch = () => {
               )}
 
               {/* Image */}
-              <div className="overflow-auto max-w-full max-h-full p-12">
+              <div 
+                ref={imageRef}
+                className="overflow-auto max-w-full max-h-full p-12 touch-none"
+                onTouchStart={handleTouchStart}
+                onTouchMove={handleTouchMove}
+                onTouchEnd={handleTouchEnd}
+              >
                 <img
                   src={extractedImages[selectedImageIndex]}
                   alt={`Product ${selectedImageIndex + 1}`}
-                  style={{ transform: `scale(${zoom})`, transition: 'transform 0.2s' }}
-                  className="max-w-full max-h-full object-contain"
+                  style={{ 
+                    transform: `scale(${zoom}) translate(${position.x}px, ${position.y}px)`, 
+                    transition: touchStartRef.current ? 'none' : 'transform 0.2s',
+                    cursor: zoom > 1 ? 'move' : 'default'
+                  }}
+                  className="max-w-full max-h-full object-contain select-none"
+                  draggable={false}
                 />
               </div>
 
