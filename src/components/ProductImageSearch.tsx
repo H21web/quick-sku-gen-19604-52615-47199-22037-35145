@@ -20,6 +20,8 @@ export const ProductImageSearch = () => {
   const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
   const [zoom, setZoom] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const imageRef = useRef<HTMLDivElement>(null);
   const touchStartRef = useRef<{ distance: number; zoom: number; x: number; y: number } | null>(null);
 
@@ -163,6 +165,31 @@ export const ProductImageSearch = () => {
     touchStartRef.current = null;
   };
 
+  // Mouse drag handlers
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (zoom > 1) {
+      setIsDragging(true);
+      setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
+    }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (isDragging && zoom > 1) {
+      setPosition({
+        x: e.clientX - dragStart.x,
+        y: e.clientY - dragStart.y
+      });
+    }
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  const handleMouseLeave = () => {
+    setIsDragging(false);
+  };
+
   useEffect(() => {
     if (zoom === 1) {
       setPosition({ x: 0, y: 0 });
@@ -212,13 +239,13 @@ export const ProductImageSearch = () => {
 
       {/* Image Viewer Dialog */}
       <Dialog open={selectedImageIndex !== null} onOpenChange={(open) => !open && closeImage()}>
-        <DialogContent className="max-w-[95vw] max-h-[95vh] p-0 bg-background/95 backdrop-blur">
+        <DialogContent className="max-w-full max-h-full w-screen h-screen p-0 bg-background/95 backdrop-blur border-0">
           <div className="sr-only">
             <DialogTitle>Product Image Viewer</DialogTitle>
             <DialogDescription>View and navigate product images</DialogDescription>
           </div>
           {selectedImageIndex !== null && (
-            <div className="relative w-full h-[90vh] flex items-center justify-center">
+            <div className="relative w-full h-screen flex items-center justify-center">
               {/* Close Button */}
               <Button
                 variant="ghost"
@@ -266,20 +293,24 @@ export const ProductImageSearch = () => {
               {/* Image */}
               <div 
                 ref={imageRef}
-                className="overflow-auto max-w-full max-h-full p-12 touch-none"
+                className="w-full h-full flex items-center justify-center touch-none"
                 onTouchStart={handleTouchStart}
                 onTouchMove={handleTouchMove}
                 onTouchEnd={handleTouchEnd}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseLeave}
               >
                 <img
                   src={extractedImages[selectedImageIndex]}
                   alt={`Product ${selectedImageIndex + 1}`}
                   style={{ 
-                    transform: `scale(${zoom}) translate(${position.x}px, ${position.y}px)`, 
-                    transition: touchStartRef.current ? 'none' : 'transform 0.2s',
-                    cursor: zoom > 1 ? 'move' : 'default'
+                    transform: `scale(${zoom}) translate(${position.x / zoom}px, ${position.y / zoom}px)`, 
+                    transition: (isDragging || touchStartRef.current) ? 'none' : 'transform 0.2s',
+                    cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default'
                   }}
-                  className="max-w-full max-h-full object-contain select-none"
+                  className="max-w-[90vw] max-h-[90vh] object-contain select-none"
                   draggable={false}
                 />
               </div>
