@@ -19,7 +19,6 @@ export const ProductImageSearch = () => {
   const [loading, setLoading] = useState(false);
   const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
   const [zoom, setZoom] = useState(1);
-  const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set());
 
   const handleSearch = async () => {
     if (!productId.trim()) {
@@ -34,7 +33,6 @@ export const ProductImageSearch = () => {
 
     setLoading(true);
     setExtractedImages([]);
-    setLoadedImages(new Set());
     
     try {
       const apiKey = getRandomApiKey();
@@ -42,7 +40,7 @@ export const ProductImageSearch = () => {
       const searchUrl = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&searchType=image&num=5&fields=items(link)`;
       
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 1800);
+      const timeoutId = setTimeout(() => controller.abort(), 5000); // Increased timeout
       const response = await fetch(searchUrl, { signal: controller.signal });
       clearTimeout(timeoutId);
 
@@ -143,20 +141,14 @@ export const ProductImageSearch = () => {
             {extractedImages.map((url, index) => (
               <div
                 key={url}
-                className="mb-3 break-inside-avoid rounded-lg border border-border hover:border-primary transition-all overflow-hidden cursor-pointer group"
+                className="mb-3 break-inside-avoid rounded-lg border border-border hover:border-primary transition-all overflow-hidden cursor-pointer group bg-muted"
                 onClick={() => openImage(index)}
               >
-                {!loadedImages.has(url) && (
-                  <Skeleton className="w-full h-[180px]" />
-                )}
                 <img
                   src={url}
                   alt={`Product image ${index + 1}`}
-                  className={`w-full h-auto object-cover transition-all duration-300 group-hover:opacity-90 ${
-                    loadedImages.has(url) ? 'opacity-100' : 'opacity-0'
-                  }`}
-                  loading="lazy"
-                  onLoad={() => setLoadedImages(prev => new Set(prev).add(url))}
+                  className="w-full h-auto object-cover transition-all duration-300 group-hover:opacity-90"
+                  loading="eager"
                 />
               </div>
             ))}
