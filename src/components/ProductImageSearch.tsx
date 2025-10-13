@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
-import { Search, X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Download } from 'lucide-react';
+import { Search, X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Download, RotateCcw } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
 import { toast } from 'sonner';
 import { extractAllProductImages } from '@/lib/imageExtractor';
@@ -125,6 +125,31 @@ export const ProductImageSearch = () => {
     }
   };
 
+  const resetZoom = () => {
+    setZoom(1);
+    setPosition({ x: 0, y: 0 });
+  };
+
+  const handleDownload = async () => {
+    if (selectedImageIndex === null) return;
+    try {
+      const imageUrl = extractedImages[selectedImageIndex];
+      const response = await fetch(imageUrl);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `product-image-${selectedImageIndex + 1}.jpg`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      toast.success('Image downloaded');
+    } catch (error) {
+      toast.error('Failed to download image');
+    }
+  };
+
   const handleZoomIn = () => {
     setZoom(prev => Math.min(prev + 0.25, 3));
   };
@@ -216,6 +241,56 @@ export const ProductImageSearch = () => {
     setIsDragging(false);
   };
 
+  // Double click/tap to zoom
+  const lastTapRef = useRef<number>(0);
+  const handleImageClick = (e: React.MouseEvent | React.TouchEvent) => {
+    e.stopPropagation();
+    const now = Date.now();
+    const timeDiff = now - lastTapRef.current;
+    
+    if (timeDiff < 300 && timeDiff > 0) {
+      // Double click/tap detected
+      if (zoom === 1) {
+        setZoom(2);
+      } else {
+        resetZoom();
+      }
+    }
+    lastTapRef.current = now;
+  };
+
+  // Keyboard navigation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (selectedImageIndex === null) return;
+      
+      switch (e.key) {
+        case 'ArrowLeft':
+          goToPrevious();
+          break;
+        case 'ArrowRight':
+          goToNext();
+          break;
+        case 'Escape':
+          closeImage();
+          break;
+        case '+':
+        case '=':
+          handleZoomIn();
+          break;
+        case '-':
+          handleZoomOut();
+          break;
+        case '0':
+          resetZoom();
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedImageIndex, zoom]);
+
   useEffect(() => {
     if (zoom === 1) {
       setPosition({ x: 0, y: 0 });
@@ -265,64 +340,96 @@ export const ProductImageSearch = () => {
 
       {/* Image Viewer Dialog */}
       <Dialog open={selectedImageIndex !== null} onOpenChange={(open) => !open && closeImage()}>
-        <DialogContent className="max-w-full max-h-full w-screen h-screen p-0 bg-background/95 backdrop-blur border-0">
+        <DialogContent className="max-w-full max-h-full w-screen h-screen p-0 bg-background/98 backdrop-blur-md border-0">
           <div className="sr-only">
             <DialogTitle>Product Image Viewer</DialogTitle>
-            <DialogDescription>View and navigate product images</DialogDescription>
+            <DialogDescription>View and navigate product images with zoom and pan. Use arrow keys to navigate, +/- to zoom, 0 to reset, or Esc to close.</DialogDescription>
           </div>
           {selectedImageIndex !== null && (
             <div className="relative w-full h-screen flex items-center justify-center">
-              {/* Close Button */}
-              <Button
-                variant="ghost"
-                size="icon"
-                className="absolute top-4 right-4 z-10 bg-background/80 hover:bg-background"
-                onClick={closeImage}
-              >
-                <X className="w-5 h-5" />
-              </Button>
+              {/* Top Controls */}
+              <div className="absolute top-4 left-0 right-0 z-20 flex justify-between items-center px-4">
+                {/* Zoom Controls */}
+                <div className="flex gap-1 bg-background/90 backdrop-blur rounded-lg p-1 shadow-lg">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="hover:bg-primary/10 transition-colors"
+                    onClick={handleZoomOut}
+                    disabled={zoom <= 0.5}
+                    title="Zoom out (-)"
+                  >
+                    <ZoomOut className="w-4 h-4" />
+                  </Button>
+                  <div className="px-3 py-2 text-sm font-medium min-w-[60px] text-center">
+                    {Math.round(zoom * 100)}%
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="hover:bg-primary/10 transition-colors"
+                    onClick={handleZoomIn}
+                    disabled={zoom >= 3}
+                    title="Zoom in (+)"
+                  >
+                    <ZoomIn className="w-4 h-4" />
+                  </Button>
+                  {zoom !== 1 && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="hover:bg-primary/10 transition-colors"
+                      onClick={resetZoom}
+                      title="Reset zoom (0)"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                    </Button>
+                  )}
+                </div>
 
-              {/* Zoom Controls */}
-              <div className="absolute top-4 left-4 z-10 flex gap-2">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="bg-background/80 hover:bg-background"
-                  onClick={handleZoomOut}
-                  disabled={zoom <= 0.5}
-                >
-                  <ZoomOut className="w-5 h-5" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="bg-background/80 hover:bg-background"
-                  onClick={handleZoomIn}
-                  disabled={zoom >= 3}
-                >
-                  <ZoomIn className="w-5 h-5" />
-                </Button>
+                {/* Right Controls */}
+                <div className="flex gap-2">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="bg-background/90 backdrop-blur hover:bg-background shadow-lg"
+                    onClick={handleDownload}
+                    title="Download image"
+                  >
+                    <Download className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="bg-background/90 backdrop-blur hover:bg-background shadow-lg"
+                    onClick={closeImage}
+                    title="Close (Esc)"
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
               </div>
 
-              {/* Previous Button */}
+              {/* Navigation Arrows */}
               {selectedImageIndex > 0 && (
-                <div
-                  className="absolute left-4 top-1/2 -translate-y-1/2 z-10 cursor-pointer text-foreground/80 hover:text-foreground transition-colors"
+                <button
+                  className="absolute left-4 top-1/2 -translate-y-1/2 z-10 p-3 rounded-full bg-background/90 backdrop-blur shadow-lg hover:bg-background hover:scale-110 transition-all duration-200 group"
                   onClick={goToPrevious}
+                  title="Previous (←)"
                 >
-                  <ChevronLeft className="w-8 h-8" />
-                </div>
+                  <ChevronLeft className="w-6 h-6 group-hover:scale-110 transition-transform" />
+                </button>
               )}
 
-              {/* Image */}
+              {/* Image Container */}
               <div 
-                className="w-full h-full flex items-center justify-center"
+                className="w-full h-full flex items-center justify-center p-20"
                 onClick={closeImage}
               >
                 <div 
                   ref={imageRef}
-                  className="relative w-full h-full flex items-center justify-center touch-none"
-                  onClick={(e) => e.stopPropagation()}
+                  className="relative w-full h-full flex items-center justify-center touch-none overflow-hidden"
+                  onClick={handleImageClick}
                   onTouchStart={handleTouchStart}
                   onTouchMove={handleTouchMove}
                   onTouchEnd={handleTouchEnd}
@@ -336,29 +443,46 @@ export const ProductImageSearch = () => {
                     alt={`Product ${selectedImageIndex + 1}`}
                     style={{ 
                       transform: `scale(${zoom}) translate(${position.x / zoom}px, ${position.y / zoom}px)`, 
-                      transition: (isDragging || touchStartRef.current) ? 'none' : 'transform 0.2s',
-                      cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default',
+                      transition: (isDragging || touchStartRef.current) ? 'none' : 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                      cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'zoom-in',
                       transformOrigin: 'center center'
                     }}
-                    className="max-w-[80vw] max-h-[80vh] object-contain select-none"
+                    className="max-w-full max-h-full object-contain select-none animate-fade-in"
                     draggable={false}
                   />
+                  
+                  {/* Zoom hint overlay */}
+                  {zoom === 1 && (
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 hover:opacity-100 transition-opacity">
+                      <div className="bg-background/80 backdrop-blur px-4 py-2 rounded-lg text-sm">
+                        Double-click to zoom
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
-              {/* Next Button */}
               {selectedImageIndex < extractedImages.length - 1 && (
-                <div
-                  className="absolute right-4 top-1/2 -translate-y-1/2 z-10 cursor-pointer text-foreground/80 hover:text-foreground transition-colors"
+                <button
+                  className="absolute right-4 top-1/2 -translate-y-1/2 z-10 p-3 rounded-full bg-background/90 backdrop-blur shadow-lg hover:bg-background hover:scale-110 transition-all duration-200 group"
                   onClick={goToNext}
+                  title="Next (→)"
                 >
-                  <ChevronRight className="w-8 h-8" />
-                </div>
+                  <ChevronRight className="w-6 h-6 group-hover:scale-110 transition-transform" />
+                </button>
               )}
 
-              {/* Image Counter */}
-              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 bg-background/80 px-3 py-1 rounded-full text-sm">
-                {selectedImageIndex + 1} / {extractedImages.length}
+              {/* Bottom Info Bar */}
+              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 bg-background/90 backdrop-blur shadow-lg px-4 py-2 rounded-full">
+                <div className="flex items-center gap-4 text-sm">
+                  <span className="font-medium">
+                    {selectedImageIndex + 1} / {extractedImages.length}
+                  </span>
+                  <div className="h-4 w-px bg-border" />
+                  <span className="text-muted-foreground text-xs">
+                    Use ← → to navigate • Double-click to zoom
+                  </span>
+                </div>
               </div>
             </div>
           )}
