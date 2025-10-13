@@ -321,7 +321,7 @@ export const ProductImageSearch = () => {
               >
                 <div 
                   ref={imageRef}
-                  className={`relative ${zoom > 1 ? 'overflow-auto touch-auto' : 'touch-none'} max-w-[80vw] max-h-[80vh]`}
+                  className="relative w-full h-full flex items-center justify-center touch-none"
                   onClick={(e) => e.stopPropagation()}
                   onTouchStart={handleTouchStart}
                   onTouchMove={handleTouchMove}
@@ -335,12 +335,12 @@ export const ProductImageSearch = () => {
                     src={extractedImages[selectedImageIndex]}
                     alt={`Product ${selectedImageIndex + 1}`}
                     style={{ 
-                      transform: `scale(${zoom})`, 
+                      transform: `scale(${zoom}) translate(${position.x / zoom}px, ${position.y / zoom}px)`, 
                       transition: (isDragging || touchStartRef.current) ? 'none' : 'transform 0.2s',
-                      cursor: zoom > 1 ? 'default' : 'default',
+                      cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default',
                       transformOrigin: 'center center'
                     }}
-                    className="max-w-full max-h-full object-contain select-none"
+                    className="max-w-[80vw] max-h-[80vh] object-contain select-none"
                     draggable={false}
                   />
                 </div>
