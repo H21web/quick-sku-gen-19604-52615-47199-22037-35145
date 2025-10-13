@@ -24,6 +24,7 @@ export const ProductImageSearch = () => {
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const imageRef = useRef<HTMLDivElement>(null);
   const touchStartRef = useRef<{ distance: number; zoom: number; x: number; y: number } | null>(null);
+  const swipeStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
 
   const handleSearch = async () => {
     if (!productId.trim()) {
@@ -148,6 +149,13 @@ export const ProductImageSearch = () => {
         x: position.x,
         y: position.y
       };
+    } else if (e.touches.length === 1 && zoom === 1) {
+      // Track swipe start for navigation
+      swipeStartRef.current = {
+        x: e.touches[0].clientX,
+        y: e.touches[0].clientY,
+        time: Date.now()
+      };
     }
   };
 
@@ -161,8 +169,26 @@ export const ProductImageSearch = () => {
     }
   };
 
-  const handleTouchEnd = () => {
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (swipeStartRef.current && zoom === 1 && e.changedTouches.length === 1) {
+      const touch = e.changedTouches[0];
+      const deltaX = touch.clientX - swipeStartRef.current.x;
+      const deltaY = touch.clientY - swipeStartRef.current.y;
+      const deltaTime = Date.now() - swipeStartRef.current.time;
+      
+      // Check if it's a horizontal swipe (more horizontal than vertical)
+      if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 50 && deltaTime < 300) {
+        if (deltaX > 0 && selectedImageIndex !== null && selectedImageIndex > 0) {
+          // Swipe right - go to previous
+          goToPrevious();
+        } else if (deltaX < 0 && selectedImageIndex !== null && selectedImageIndex < extractedImages.length - 1) {
+          // Swipe left - go to next
+          goToNext();
+        }
+      }
+    }
     touchStartRef.current = null;
+    swipeStartRef.current = null;
   };
 
   // Mouse drag handlers
@@ -295,7 +321,7 @@ export const ProductImageSearch = () => {
               >
                 <div 
                   ref={imageRef}
-                  className="relative touch-none"
+                  className={`relative ${zoom > 1 ? 'overflow-auto touch-auto' : 'touch-none'} max-w-[80vw] max-h-[80vh]`}
                   onClick={(e) => e.stopPropagation()}
                   onTouchStart={handleTouchStart}
                   onTouchMove={handleTouchMove}
@@ -309,11 +335,12 @@ export const ProductImageSearch = () => {
                     src={extractedImages[selectedImageIndex]}
                     alt={`Product ${selectedImageIndex + 1}`}
                     style={{ 
-                      transform: `scale(${zoom}) translate(${position.x / zoom}px, ${position.y / zoom}px)`, 
+                      transform: `scale(${zoom})`, 
                       transition: (isDragging || touchStartRef.current) ? 'none' : 'transform 0.2s',
-                      cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default'
+                      cursor: zoom > 1 ? 'default' : 'default',
+                      transformOrigin: 'center center'
                     }}
-                    className="max-w-[70vw] max-h-[70vh] object-contain select-none"
+                    className="max-w-full max-h-full object-contain select-none"
                     draggable={false}
                   />
                 </div>
