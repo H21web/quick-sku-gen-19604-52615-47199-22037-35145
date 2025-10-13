@@ -280,51 +280,53 @@ export const ProductImageSearch = () => {
 
               {/* Previous Button */}
               {selectedImageIndex > 0 && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="absolute left-4 top-1/2 -translate-y-1/2 z-10 bg-background/80 hover:bg-background"
+                <div
+                  className="absolute left-4 top-1/2 -translate-y-1/2 z-10 cursor-pointer text-foreground/80 hover:text-foreground transition-colors"
                   onClick={goToPrevious}
                 >
-                  <ChevronLeft className="w-6 h-6" />
-                </Button>
+                  <ChevronLeft className="w-8 h-8" />
+                </div>
               )}
 
               {/* Image */}
               <div 
-                ref={imageRef}
-                className="w-full h-full flex items-center justify-center touch-none"
-                onTouchStart={handleTouchStart}
-                onTouchMove={handleTouchMove}
-                onTouchEnd={handleTouchEnd}
-                onMouseDown={handleMouseDown}
-                onMouseMove={handleMouseMove}
-                onMouseUp={handleMouseUp}
-                onMouseLeave={handleMouseLeave}
+                className="w-full h-full flex items-center justify-center"
+                onClick={closeImage}
               >
-                <img
-                  src={extractedImages[selectedImageIndex]}
-                  alt={`Product ${selectedImageIndex + 1}`}
-                  style={{ 
-                    transform: `scale(${zoom}) translate(${position.x / zoom}px, ${position.y / zoom}px)`, 
-                    transition: (isDragging || touchStartRef.current) ? 'none' : 'transform 0.2s',
-                    cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default'
-                  }}
-                  className="max-w-[90vw] max-h-[90vh] object-contain select-none"
-                  draggable={false}
-                />
+                <div 
+                  ref={imageRef}
+                  className="relative touch-none"
+                  onClick={(e) => e.stopPropagation()}
+                  onTouchStart={handleTouchStart}
+                  onTouchMove={handleTouchMove}
+                  onTouchEnd={handleTouchEnd}
+                  onMouseDown={handleMouseDown}
+                  onMouseMove={handleMouseMove}
+                  onMouseUp={handleMouseUp}
+                  onMouseLeave={handleMouseLeave}
+                >
+                  <img
+                    src={extractedImages[selectedImageIndex]}
+                    alt={`Product ${selectedImageIndex + 1}`}
+                    style={{ 
+                      transform: `scale(${zoom}) translate(${position.x / zoom}px, ${position.y / zoom}px)`, 
+                      transition: (isDragging || touchStartRef.current) ? 'none' : 'transform 0.2s',
+                      cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default'
+                    }}
+                    className="max-w-[70vw] max-h-[70vh] object-contain select-none"
+                    draggable={false}
+                  />
+                </div>
               </div>
 
               {/* Next Button */}
               {selectedImageIndex < extractedImages.length - 1 && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="absolute right-4 top-1/2 -translate-y-1/2 z-10 bg-background/80 hover:bg-background"
+                <div
+                  className="absolute right-4 top-1/2 -translate-y-1/2 z-10 cursor-pointer text-foreground/80 hover:text-foreground transition-colors"
                   onClick={goToNext}
                 >
-                  <ChevronRight className="w-6 h-6" />
-                </Button>
+                  <ChevronRight className="w-8 h-8" />
+                </div>
               )}
 
               {/* Image Counter */}
