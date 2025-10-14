@@ -149,13 +149,17 @@ export const ProductImageSearch = () => {
         x: position.x,
         y: position.y
       };
-    } else if (e.touches.length === 1 && zoom === 1) {
-      // Track swipe start for navigation
+    } else if (e.touches.length === 1) {
+      // Track touch start for both navigation and panning
       swipeStartRef.current = {
         x: e.touches[0].clientX,
         y: e.touches[0].clientY,
         time: Date.now()
       };
+      if (zoom > 1) {
+        // Start panning for zoomed images
+        setDragStart({ x: e.touches[0].clientX - position.x, y: e.touches[0].clientY - position.y });
+      }
     }
   };
 
@@ -166,6 +170,12 @@ export const ProductImageSearch = () => {
       const scale = distance / touchStartRef.current.distance;
       const newZoom = Math.min(Math.max(touchStartRef.current.zoom * scale, 0.5), 3);
       setZoom(newZoom);
+    } else if (e.touches.length === 1 && zoom > 1 && swipeStartRef.current) {
+      // Pan the zoomed image
+      e.preventDefault();
+      const newX = e.touches[0].clientX - dragStart.x;
+      const newY = e.touches[0].clientY - dragStart.y;
+      setPosition({ x: newX, y: newY });
     }
   };
 
