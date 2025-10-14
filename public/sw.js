@@ -2,7 +2,7 @@ const CACHE_NAME = 'sku-gen-v1';
 const urlsToCache = [
   '/',
   '/index.html',
-  '/placeholder.svg'
+  '/placehldr.png'
 ];
 
 self.addEventListener('install', (event) => {
