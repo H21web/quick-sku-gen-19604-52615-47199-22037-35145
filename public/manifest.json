@@ -1,7 +1,7 @@
 {
   "name": "U196 App",
   "short_name": "U196 scan",
-  "description": "Fast and efficient barcode generation for inventory management",
+  "description": "Fast and efficient barcode generation and product search",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
@@ -9,13 +9,13 @@
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "/placeholder.svg",
+      "src": "/placehldr.png",
       "sizes": "192x192",
       "type": "image/svg+xml",
       "purpose": "any maskable"
     },
     {
-      "src": "/placeholder.svg",
+      "src": "/placehldr.png",
       "sizes": "512x512",
       "type": "image/svg+xml",
       "purpose": "any maskable"
