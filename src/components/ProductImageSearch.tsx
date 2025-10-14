@@ -194,6 +194,7 @@ export const ProductImageSearch = () => {
   // Mouse drag handlers
   const handleMouseDown = (e: React.MouseEvent) => {
     if (zoom > 1) {
+      e.preventDefault();
       setIsDragging(true);
       setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
     }
@@ -201,10 +202,10 @@ export const ProductImageSearch = () => {
 
   const handleMouseMove = (e: React.MouseEvent) => {
     if (isDragging && zoom > 1) {
-      setPosition({
-        x: e.clientX - dragStart.x,
-        y: e.clientY - dragStart.y
-      });
+      e.preventDefault();
+      const newX = e.clientX - dragStart.x;
+      const newY = e.clientY - dragStart.y;
+      setPosition({ x: newX, y: newY });
     }
   };
 
@@ -335,12 +336,14 @@ export const ProductImageSearch = () => {
                     src={extractedImages[selectedImageIndex]}
                     alt={`Product ${selectedImageIndex + 1}`}
                     style={{ 
-                      transform: `scale(${zoom}) translate(${position.x / zoom}px, ${position.y / zoom}px)`, 
+                      transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})`, 
                       transition: (isDragging || touchStartRef.current) ? 'none' : 'transform 0.2s',
                       cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default',
-                      transformOrigin: 'center center'
+                      transformOrigin: 'center center',
+                      userSelect: 'none',
+                      WebkitUserSelect: 'none'
                     }}
-                    className="max-w-[80vw] max-h-[80vh] object-contain select-none"
+                    className="max-w-[80vw] max-h-[80vh] object-contain"
                     draggable={false}
                   />
                 </div>
