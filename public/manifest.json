@@ -1,6 +1,6 @@
 {
-  "name": "U198 App",
-  "short_name": "U198 scan",
+  "name": "U196 App",
+  "short_name": "U196 scan",
   "description": "Fast and efficient barcode generation for inventory management",
   "start_url": "/",
   "display": "standalone",
