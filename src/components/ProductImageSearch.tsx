@@ -25,6 +25,8 @@ export const ProductImageSearch = () => {
   const imageRef = useRef<HTMLDivElement>(null);
   const touchStartRef = useRef<{ distance: number; zoom: number; x: number; y: number } | null>(null);
   const swipeStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
+  const lastTapRef = useRef<number>(0);
+  const [isTransitioning, setIsTransitioning] = useState(false);
 
   const handleSearch = async () => {
     if (!productId.trim()) {
@@ -140,6 +142,28 @@ export const ProductImageSearch = () => {
     return Math.sqrt(dx * dx + dy * dy);
   };
 
+  const handleDoubleTap = (e: React.TouchEvent) => {
+    const now = Date.now();
+    const DOUBLE_TAP_DELAY = 300;
+    
+    if (now - lastTapRef.current < DOUBLE_TAP_DELAY) {
+      e.preventDefault();
+      setIsTransitioning(true);
+      if (zoom === 1) {
+        // Zoom in to 2x
+        setZoom(2);
+      } else {
+        // Zoom out to 1x
+        setZoom(1);
+        setPosition({ x: 0, y: 0 });
+      }
+      setTimeout(() => setIsTransitioning(false), 300);
+      lastTapRef.current = 0;
+    } else {
+      lastTapRef.current = now;
+    }
+  };
+
   const handleTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 2) {
       const distance = getTouchDistance(e.touches[0], e.touches[1]);
@@ -150,6 +174,7 @@ export const ProductImageSearch = () => {
         y: position.y
       };
     } else if (e.touches.length === 1) {
+      handleDoubleTap(e);
       // Track touch start for both navigation and panning
       swipeStartRef.current = {
         x: e.touches[0].clientX,
@@ -347,11 +372,12 @@ export const ProductImageSearch = () => {
                     alt={`Product ${selectedImageIndex + 1}`}
                     style={{ 
                       transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})`, 
-                      transition: (isDragging || touchStartRef.current) ? 'none' : 'transform 0.2s',
+                      transition: (isDragging || touchStartRef.current) && !isTransitioning ? 'none' : 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
                       cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default',
                       transformOrigin: 'center center',
                       userSelect: 'none',
-                      WebkitUserSelect: 'none'
+                      WebkitUserSelect: 'none',
+                      touchAction: 'none'
                     }}
                     className="max-w-[80vw] max-h-[80vh] object-contain"
                     draggable={false}
