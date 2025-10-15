@@ -128,7 +128,7 @@ export const ProductImageSearch = () => {
   };
 
   const handleZoomIn = () => {
-    setZoom(prev => Math.min(prev + 0.25, 3));
+    setZoom(prev => Math.min(prev + 0.25, 5));
   };
 
   const handleZoomOut = () => {
@@ -193,7 +193,7 @@ export const ProductImageSearch = () => {
       e.preventDefault();
       const distance = getTouchDistance(e.touches[0], e.touches[1]);
       const scale = distance / touchStartRef.current.distance;
-      const newZoom = Math.min(Math.max(touchStartRef.current.zoom * scale, 0.5), 3);
+      const newZoom = Math.min(Math.max(touchStartRef.current.zoom * scale, 0.5), 5);
       setZoom(newZoom);
     } else if (e.touches.length === 1 && zoom > 1 && swipeStartRef.current) {
       // Pan the zoomed image
@@ -334,7 +334,7 @@ export const ProductImageSearch = () => {
                   size="icon"
                   className="bg-background/80 hover:bg-background"
                   onClick={handleZoomIn}
-                  disabled={zoom >= 3}
+                  disabled={zoom >= 5}
                 >
                   <ZoomIn className="w-5 h-5" />
                 </Button>
