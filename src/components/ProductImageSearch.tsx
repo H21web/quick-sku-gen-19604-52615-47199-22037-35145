@@ -347,15 +347,15 @@ export const ProductImageSearch = () => {
       const { data: { text } } = await worker.recognize(capturedImage);
       await worker.terminate();
       
-      // Look for "id" pattern and extract what comes after it
-      const idMatch = text.match(/id\s*:?\s*([^\s\n]+)/i);
+      // Look specifically for "ID :" followed by numbers only
+      const idMatch = text.match(/id\s*:?\s*(\d+)/i);
       
       if (idMatch && idMatch[1]) {
-        const extractedId = idMatch[1].trim();
+        const extractedId = idMatch[1];
         setProductId(extractedId);
         toast.success(`ID extracted: ${extractedId}`);
       } else {
-        toast.error('No ID found in image. Looking for "id : [value]"');
+        toast.error('No ID found. Looking for "ID : [numbers]"');
       }
     } catch (error) {
       console.error('OCR error:', error);
