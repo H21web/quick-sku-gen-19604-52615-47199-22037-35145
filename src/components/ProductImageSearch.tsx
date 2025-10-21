@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { extractAllProductImages } from '@/lib/imageExtractor';
 import { getRandomApiKey, GOOGLE_SEARCH_ENGINE_ID } from '@/lib/config';
 import { Skeleton } from './ui/skeleton';
+import { createWorker } from 'tesseract.js';
 
 interface ImageResult {
   imageUrl: string;
@@ -30,6 +31,7 @@ export const ProductImageSearch = () => {
   const [showCameraDialog, setShowCameraDialog] = useState(false);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [isProcessingOCR, setIsProcessingOCR] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -331,11 +333,33 @@ export const ProductImageSearch = () => {
     startCamera();
   };
 
-  const usePhoto = () => {
+  const usePhoto = async () => {
     if (!capturedImage) return;
     
-    toast.info('Image captured! OCR feature requires backend setup to extract text.');
-    stopCamera();
+    setIsProcessingOCR(true);
+    toast.info('Extracting text from image...');
+    
+    try {
+      const worker = await createWorker('eng');
+      const { data: { text } } = await worker.recognize(capturedImage);
+      await worker.terminate();
+      
+      // Clean up the extracted text - remove extra spaces, newlines
+      const cleanedText = text.trim().replace(/\s+/g, ' ');
+      
+      if (cleanedText) {
+        setProductId(cleanedText);
+        toast.success('Text extracted successfully!');
+      } else {
+        toast.error('No text found in image');
+      }
+    } catch (error) {
+      console.error('OCR error:', error);
+      toast.error('Failed to extract text from image');
+    } finally {
+      setIsProcessingOCR(false);
+      stopCamera();
+    }
   };
 
   useEffect(() => {
@@ -571,14 +595,23 @@ export const ProductImageSearch = () => {
                     onClick={usePhoto}
                     className="w-full"
                     size="lg"
+                    disabled={isProcessingOCR}
                   >
-                    Use This Photo
+                    {isProcessingOCR ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" />
+                        Extracting Text...
+                      </>
+                    ) : (
+                      'Extract Text'
+                    )}
                   </Button>
                   <Button 
                     onClick={retakePhoto}
                     variant="outline"
                     className="w-full"
                     size="lg"
+                    disabled={isProcessingOCR}
                   >
                     Retake
                   </Button>
