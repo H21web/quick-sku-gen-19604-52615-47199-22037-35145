@@ -1,13 +1,12 @@
 import { useState, useRef, useEffect } from 'react';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
-import { Search, X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Download, Scan, Camera } from 'lucide-react';
+import { Search, X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Scan } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
 import { toast } from 'sonner';
 import { extractAllProductImages } from '@/lib/imageExtractor';
 import { getRandomApiKey, GOOGLE_SEARCH_ENGINE_ID } from '@/lib/config';
 import { Skeleton } from './ui/skeleton';
-import { createWorker } from 'tesseract.js';
 
 interface ImageResult {
   imageUrl: string;
@@ -29,10 +28,12 @@ export const ProductImageSearch = () => {
   const lastTapRef = useRef<number>(0);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [showCameraDialog, setShowCameraDialog] = useState(false);
+  const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [isProcessingOCR, setIsProcessingOCR] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSearch = async () => {
     if (!productId.trim()) {
@@ -264,91 +265,50 @@ export const ProductImageSearch = () => {
     }
   }, [zoom]);
 
-  const startCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: 'environment' } // Use back camera on mobile
-      });
-      setCameraStream(stream);
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-      setShowCameraDialog(true);
-    } catch (error) {
-      toast.error('Failed to access camera');
-      console.error('Camera error:', error);
-    }
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const imageDataUrl = event.target?.result as string;
+      setCapturedImage(imageDataUrl);
+      processImageOCR(imageDataUrl);
+    };
+    reader.readAsDataURL(file);
   };
 
-  const stopCamera = () => {
-    if (cameraStream) {
-      cameraStream.getTracks().forEach(track => track.stop());
-      setCameraStream(null);
-    }
-    setShowCameraDialog(false);
-  };
-
-  const captureAndProcessImage = async () => {
-    if (!videoRef.current || !canvasRef.current) return;
-
+  const processImageOCR = async (imageData: string) => {
     setIsProcessingOCR(true);
-    const canvas = canvasRef.current;
-    const video = videoRef.current;
+    setShowCameraDialog(true);
     
-    // Set canvas dimensions to match video
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    
-    // Draw current video frame to canvas
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    
-    // Convert canvas to blob
-    canvas.toBlob(async (blob) => {
-      if (!blob) {
-        toast.error('Failed to capture image');
-        setIsProcessingOCR(false);
-        return;
-      }
+    try {
+      toast.info('Extracting text from image...');
+      
+      // Convert base64 to blob
+      const response = await fetch(imageData);
+      const blob = await response.blob();
+      
+      // For now, show a message that OCR needs backend setup
+      // This will be implemented with Lovable Cloud
+      toast.error('OCR feature requires Lovable Cloud setup');
+      setIsProcessingOCR(false);
+      
+    } catch (error) {
+      toast.error('Failed to process image');
+      console.error('OCR error:', error);
+      setIsProcessingOCR(false);
+    }
+  };
 
-      try {
-        toast.info('Extracting text from image...');
-        
-        // Initialize Tesseract worker
-        const worker = await createWorker('eng');
-        
-        // Perform OCR
-        const { data: { text } } = await worker.recognize(blob);
-        await worker.terminate();
-        
-        // Extract alphanumeric text (clean up the result)
-        const cleanedText = text
-          .replace(/[^a-zA-Z0-9\s]/g, '') // Remove special characters
-          .trim()
-          .split(/\s+/) // Split by whitespace
-          .filter(word => word.length > 0) // Remove empty strings
-          .join(' ');
-        
-        if (cleanedText) {
-          setProductId(cleanedText);
-          toast.success('Text extracted successfully!');
-          stopCamera();
-        } else {
-          toast.error('No text found in image');
-        }
-      } catch (error) {
-        toast.error('Failed to extract text');
-        console.error('OCR error:', error);
-      } finally {
-        setIsProcessingOCR(false);
-      }
-    }, 'image/jpeg');
+  const closeDialog = () => {
+    setShowCameraDialog(false);
+    setCapturedImage(null);
+    setIsProcessingOCR(false);
   };
 
   useEffect(() => {
     return () => {
-      // Cleanup camera stream on unmount
       if (cameraStream) {
         cameraStream.getTracks().forEach(track => track.stop());
       }
@@ -367,7 +327,20 @@ export const ProductImageSearch = () => {
           onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
           className="flex-1"
         />
-        <Button variant="outline" size="icon" onClick={startCamera} title="Scan text from camera">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={handleFileUpload}
+          className="hidden"
+        />
+        <Button 
+          variant="outline" 
+          size="icon" 
+          onClick={() => fileInputRef.current?.click()} 
+          title="Scan text from image"
+        >
           <Scan className="w-4 h-4" />
         </Button>
         <Button onClick={handleSearch} disabled={loading}>
@@ -504,60 +477,40 @@ export const ProductImageSearch = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Camera Scanner Dialog */}
-      <Dialog open={showCameraDialog} onOpenChange={(open) => !open && stopCamera()}>
-        <DialogContent className="max-w-full max-h-full w-screen h-screen p-0 bg-background">
+      {/* OCR Preview Dialog */}
+      <Dialog open={showCameraDialog} onOpenChange={(open) => !open && closeDialog()}>
+        <DialogContent className="max-w-md">
           <div className="sr-only">
-            <DialogTitle>Scan Product Text</DialogTitle>
-            <DialogDescription>Capture an image to extract product ID</DialogDescription>
+            <DialogTitle>Image OCR</DialogTitle>
+            <DialogDescription>Processing image for text extraction</DialogDescription>
           </div>
-          <div className="relative w-full h-full flex flex-col">
-            {/* Close Button */}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="absolute top-4 right-4 z-10 bg-background/80 hover:bg-background"
-              onClick={stopCamera}
-            >
-              <X className="w-5 h-5" />
-            </Button>
-
-            {/* Video Preview */}
-            <div className="flex-1 relative overflow-hidden bg-black">
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                className="w-full h-full object-cover"
-              />
-              <canvas ref={canvasRef} className="hidden" />
-              
-              {/* Scanning Frame Overlay */}
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div className="w-[80%] h-[40%] border-2 border-primary rounded-lg shadow-lg">
-                  <div className="absolute top-0 left-0 w-4 h-4 border-t-4 border-l-4 border-primary" />
-                  <div className="absolute top-0 right-0 w-4 h-4 border-t-4 border-r-4 border-primary" />
-                  <div className="absolute bottom-0 left-0 w-4 h-4 border-b-4 border-l-4 border-primary" />
-                  <div className="absolute bottom-0 right-0 w-4 h-4 border-b-4 border-r-4 border-primary" />
-                </div>
-              </div>
-            </div>
-
-            {/* Instructions and Capture Button */}
-            <div className="p-6 bg-background space-y-4">
-              <p className="text-center text-muted-foreground text-sm">
-                Position the product text within the frame
-              </p>
-              <Button 
-                onClick={captureAndProcessImage} 
-                disabled={isProcessingOCR}
-                className="w-full"
-                size="lg"
-              >
-                <Camera className="w-5 h-5 mr-2" />
-                {isProcessingOCR ? 'Processing...' : 'Capture & Extract Text'}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold">OCR Setup Required</h3>
+              <Button variant="ghost" size="icon" onClick={closeDialog}>
+                <X className="w-4 h-4" />
               </Button>
             </div>
+            
+            {capturedImage && (
+              <div className="rounded-lg overflow-hidden border">
+                <img src={capturedImage} alt="Captured" className="w-full" />
+              </div>
+            )}
+            
+            <div className="space-y-2 text-sm text-muted-foreground">
+              <p>To enable OCR text extraction, we need to set up Lovable Cloud with an OCR service.</p>
+              <p className="font-medium text-foreground">This will allow you to:</p>
+              <ul className="list-disc list-inside space-y-1 ml-2">
+                <li>Extract text from images instantly</li>
+                <li>Auto-fill product IDs from camera</li>
+                <li>Process images securely on the backend</li>
+              </ul>
+            </div>
+            
+            <Button onClick={closeDialog} className="w-full">
+              Got it
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
