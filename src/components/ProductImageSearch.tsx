@@ -337,25 +337,29 @@ export const ProductImageSearch = () => {
     if (!capturedImage) return;
     
     setIsProcessingOCR(true);
-    toast.info('Extracting text from image...');
+    toast.info('Extracting ID...');
     
     try {
-      const worker = await createWorker('eng');
+      const worker = await createWorker('eng', 1, {
+        logger: () => {}, // Disable logging for speed
+      });
+      
       const { data: { text } } = await worker.recognize(capturedImage);
       await worker.terminate();
       
-      // Clean up the extracted text - remove extra spaces, newlines
-      const cleanedText = text.trim().replace(/\s+/g, ' ');
+      // Look for "id" pattern and extract what comes after it
+      const idMatch = text.match(/id\s*:?\s*([^\s\n]+)/i);
       
-      if (cleanedText) {
-        setProductId(cleanedText);
-        toast.success('Text extracted successfully!');
+      if (idMatch && idMatch[1]) {
+        const extractedId = idMatch[1].trim();
+        setProductId(extractedId);
+        toast.success(`ID extracted: ${extractedId}`);
       } else {
-        toast.error('No text found in image');
+        toast.error('No ID found in image. Looking for "id : [value]"');
       }
     } catch (error) {
       console.error('OCR error:', error);
-      toast.error('Failed to extract text from image');
+      toast.error('Failed to extract ID from image');
     } finally {
       setIsProcessingOCR(false);
       stopCamera();
