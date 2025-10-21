@@ -30,10 +30,8 @@ export const ProductImageSearch = () => {
   const [showCameraDialog, setShowCameraDialog] = useState(false);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
-  const [isProcessingOCR, setIsProcessingOCR] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSearch = async () => {
     if (!productId.trim()) {
@@ -265,46 +263,79 @@ export const ProductImageSearch = () => {
     }
   }, [zoom]);
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const imageDataUrl = event.target?.result as string;
-      setCapturedImage(imageDataUrl);
-      processImageOCR(imageDataUrl);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const processImageOCR = async (imageData: string) => {
-    setIsProcessingOCR(true);
-    setShowCameraDialog(true);
-    
+  const startCamera = async () => {
     try {
-      toast.info('Extracting text from image...');
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          facingMode: 'environment',
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
+        } 
+      });
+      setCameraStream(stream);
+      setShowCameraDialog(true);
       
-      // Convert base64 to blob
-      const response = await fetch(imageData);
-      const blob = await response.blob();
-      
-      // For now, show a message that OCR needs backend setup
-      // This will be implemented with Lovable Cloud
-      toast.error('OCR feature requires Lovable Cloud setup');
-      setIsProcessingOCR(false);
-      
+      // Wait for dialog to mount then attach stream
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+      }, 100);
     } catch (error) {
-      toast.error('Failed to process image');
-      console.error('OCR error:', error);
-      setIsProcessingOCR(false);
+      toast.error('Camera access denied or not available');
+      console.error('Camera error:', error);
     }
   };
 
-  const closeDialog = () => {
+  const stopCamera = () => {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(track => track.stop());
+      setCameraStream(null);
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
     setShowCameraDialog(false);
     setCapturedImage(null);
-    setIsProcessingOCR(false);
+  };
+
+  const captureImage = () => {
+    if (!videoRef.current || !canvasRef.current) return;
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    
+    // Set canvas size to match video
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    
+    // Draw video frame to canvas
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    
+    // Convert to image
+    const imageData = canvas.toDataURL('image/jpeg', 0.9);
+    setCapturedImage(imageData);
+    
+    // Stop camera stream
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(track => track.stop());
+      setCameraStream(null);
+    }
+  };
+
+  const retakePhoto = () => {
+    setCapturedImage(null);
+    startCamera();
+  };
+
+  const usePhoto = () => {
+    if (!capturedImage) return;
+    
+    toast.info('Image captured! OCR feature requires backend setup to extract text.');
+    stopCamera();
   };
 
   useEffect(() => {
@@ -327,19 +358,11 @@ export const ProductImageSearch = () => {
           onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
           className="flex-1"
         />
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          onChange={handleFileUpload}
-          className="hidden"
-        />
         <Button 
           variant="outline" 
           size="icon" 
-          onClick={() => fileInputRef.current?.click()} 
-          title="Scan text from image"
+          onClick={startCamera} 
+          title="Scan text from camera"
         >
           <Scan className="w-4 h-4" />
         </Button>
@@ -477,40 +500,91 @@ export const ProductImageSearch = () => {
         </DialogContent>
       </Dialog>
 
-      {/* OCR Preview Dialog */}
-      <Dialog open={showCameraDialog} onOpenChange={(open) => !open && closeDialog()}>
-        <DialogContent className="max-w-md">
+      {/* Camera Dialog */}
+      <Dialog open={showCameraDialog} onOpenChange={(open) => !open && stopCamera()}>
+        <DialogContent className="max-w-full max-h-full w-screen h-screen p-0 bg-black">
           <div className="sr-only">
-            <DialogTitle>Image OCR</DialogTitle>
-            <DialogDescription>Processing image for text extraction</DialogDescription>
+            <DialogTitle>Camera Scanner</DialogTitle>
+            <DialogDescription>Capture product image for text extraction</DialogDescription>
           </div>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold">OCR Setup Required</h3>
-              <Button variant="ghost" size="icon" onClick={closeDialog}>
-                <X className="w-4 h-4" />
-              </Button>
-            </div>
-            
-            {capturedImage && (
-              <div className="rounded-lg overflow-hidden border">
-                <img src={capturedImage} alt="Captured" className="w-full" />
-              </div>
-            )}
-            
-            <div className="space-y-2 text-sm text-muted-foreground">
-              <p>To enable OCR text extraction, we need to set up Lovable Cloud with an OCR service.</p>
-              <p className="font-medium text-foreground">This will allow you to:</p>
-              <ul className="list-disc list-inside space-y-1 ml-2">
-                <li>Extract text from images instantly</li>
-                <li>Auto-fill product IDs from camera</li>
-                <li>Process images securely on the backend</li>
-              </ul>
-            </div>
-            
-            <Button onClick={closeDialog} className="w-full">
-              Got it
+          
+          <div className="relative w-full h-full">
+            {/* Close Button */}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="absolute top-4 right-4 z-20 bg-black/50 hover:bg-black/70 text-white"
+              onClick={stopCamera}
+            >
+              <X className="w-5 h-5" />
             </Button>
+
+            {!capturedImage ? (
+              <>
+                {/* Live Camera View */}
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-full object-cover"
+                />
+                <canvas ref={canvasRef} className="hidden" />
+                
+                {/* Scanning Guide */}
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <div className="relative w-[85%] max-w-md aspect-[3/2] border-2 border-primary/60 rounded-lg">
+                    <div className="absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 border-primary rounded-tl" />
+                    <div className="absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 border-primary rounded-tr" />
+                    <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 border-primary rounded-bl" />
+                    <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 border-primary rounded-br" />
+                  </div>
+                </div>
+
+                {/* Instructions */}
+                <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 to-transparent">
+                  <p className="text-white text-center mb-4 text-sm">
+                    Position product text within the frame
+                  </p>
+                  <Button 
+                    onClick={captureImage}
+                    className="w-full"
+                    size="lg"
+                  >
+                    <Scan className="w-5 h-5 mr-2" />
+                    Capture
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                {/* Captured Image Preview */}
+                <img 
+                  src={capturedImage} 
+                  alt="Captured" 
+                  className="w-full h-full object-contain"
+                />
+                
+                {/* Actions */}
+                <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 to-transparent space-y-3">
+                  <Button 
+                    onClick={usePhoto}
+                    className="w-full"
+                    size="lg"
+                  >
+                    Use This Photo
+                  </Button>
+                  <Button 
+                    onClick={retakePhoto}
+                    variant="outline"
+                    className="w-full"
+                    size="lg"
+                  >
+                    Retake
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
         </DialogContent>
       </Dialog>
