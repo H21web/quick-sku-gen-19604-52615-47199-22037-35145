@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { extractAllProductImages } from '@/lib/imageExtractor';
 import { getRandomApiKey, GOOGLE_SEARCH_ENGINE_ID } from '@/lib/config';
 import { Skeleton } from './ui/skeleton';
-import { createWorker, PSM } from 'tesseract.js';
+
 
 interface ImageResult {
   imageUrl: string;
@@ -337,36 +337,55 @@ export const ProductImageSearch = () => {
     if (!capturedImage) return;
     
     setIsProcessingOCR(true);
-    toast.info('Extracting ID...');
+    toast.info('Extracting ID with AI...');
     
     try {
-      const worker = await createWorker('eng', 1, {
-        logger: () => {}, // Disable logging for speed
+      // Use AI vision to extract text from image
+      const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'google/gemini-2.5-flash-image-preview',
+          messages: [{
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: 'Extract ONLY the numeric ID that appears after "ID :" or "ID:" in this image. Return ONLY the numbers, nothing else. If you see multiple IDs, return the one that is most prominently displayed or marked (like with a red circle).'
+              },
+              {
+                type: 'image_url',
+                image_url: { url: capturedImage }
+              }
+            ]
+          }]
+        })
       });
+
+      if (!response.ok) {
+        throw new Error('Failed to extract text');
+      }
+
+      const data = await response.json();
+      const extractedText = data.choices?.[0]?.message?.content || '';
       
-      await worker.setParameters({
-        tessedit_char_whitelist: '0123456789ID:id ',
-        tessedit_pageseg_mode: PSM.AUTO,
-      });
-      const { data: { text } } = await worker.recognize(capturedImage);
-      await worker.terminate();
-      
-      // Extract only numbers immediately after "ID :" or "ID:"
-      const idMatch = text.match(/ID\s*[:：]\s*(\d+)/i);
-      const digitsOnly = idMatch?.[1] || '';
+      // Extract only digits from the response
+      const digitsOnly = extractedText.replace(/\D/g, '');
       
       if (digitsOnly) {
         setProductId(digitsOnly);
         toast.success(`ID extracted: ${digitsOnly}`);
+        stopCamera();
       } else {
-        toast.error('No ID found. Looking for "ID : [numbers]"');
+        toast.error('No ID found. Please enter manually.');
       }
     } catch (error) {
       console.error('OCR error:', error);
-      toast.error('Failed to extract ID from image');
+      toast.error('Failed to extract ID. Please enter manually.');
     } finally {
       setIsProcessingOCR(false);
-      stopCamera();
     }
   };
 
@@ -599,6 +618,9 @@ export const ProductImageSearch = () => {
                 
                 {/* Actions */}
                 <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 to-transparent space-y-3">
+                  <p className="text-white text-center text-sm mb-2">
+                    AI will extract the ID automatically or enter it manually
+                  </p>
                   <Button 
                     onClick={usePhoto}
                     className="w-full"
@@ -611,9 +633,28 @@ export const ProductImageSearch = () => {
                         Extracting Text...
                       </>
                     ) : (
-                      'Extract Text'
+                      'Auto Extract ID'
                     )}
                   </Button>
+                  
+                  {/* Manual Input */}
+                  <div className="flex gap-2">
+                    <Input
+                      type="text"
+                      placeholder="Or type ID manually"
+                      value={productId}
+                      onChange={(e) => setProductId(e.target.value)}
+                      className="flex-1 bg-white/90"
+                      disabled={isProcessingOCR}
+                    />
+                    <Button 
+                      onClick={stopCamera}
+                      disabled={isProcessingOCR || !productId.trim()}
+                    >
+                      Use
+                    </Button>
+                  </div>
+                  
                   <Button 
                     onClick={retakePhoto}
                     variant="outline"
