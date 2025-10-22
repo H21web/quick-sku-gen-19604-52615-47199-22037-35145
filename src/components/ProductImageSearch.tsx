@@ -345,17 +345,30 @@ export const ProductImageSearch = () => {
       });
       
       await worker.setParameters({
-        tessedit_char_whitelist: '0123456789ID:id ',
-        tessedit_pageseg_mode: PSM.SINGLE_LINE,
+        tessedit_char_whitelist: '0123456789IDDesc:id ',
+        tessedit_pageseg_mode: PSM.SPARSE_TEXT,
       });
       const { data: { text } } = await worker.recognize(capturedImage);
       await worker.terminate();
       
       console.log('Extracted text:', text);
       
-      // Extract only numbers after "ID :" or "ID:"
-      const idMatch = text.match(/ID\s*[:：]?\s*(\d+)/i);
-      const digitsOnly = idMatch?.[1]?.replace(/\D/g, '') || '';
+      // Look for ID pattern before "Desc" - extract the number after "ID :"
+      const lines = text.split('\n');
+      let digitsOnly = '';
+      
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        // Check if this line contains ID
+        if (/ID/i.test(line)) {
+          // Extract numbers after ID :
+          const idMatch = line.match(/ID\s*[:：]?\s*(\d+)/i);
+          if (idMatch && idMatch[1]) {
+            digitsOnly = idMatch[1].replace(/\D/g, '');
+            break;
+          }
+        }
+      }
       
       if (digitsOnly) {
         setProductId(digitsOnly);
