@@ -346,14 +346,16 @@ export const ProductImageSearch = () => {
       
       await worker.setParameters({
         tessedit_char_whitelist: '0123456789ID:id ',
-        tessedit_pageseg_mode: PSM.AUTO,
+        tessedit_pageseg_mode: PSM.SINGLE_LINE,
       });
       const { data: { text } } = await worker.recognize(capturedImage);
       await worker.terminate();
       
-      // Extract only numbers immediately after "ID :" or "ID:"
-      const idMatch = text.match(/ID\s*[:：]\s*(\d+)/i);
-      const digitsOnly = idMatch?.[1] || '';
+      console.log('Extracted text:', text);
+      
+      // Extract only numbers after "ID :" or "ID:"
+      const idMatch = text.match(/ID\s*[:：]?\s*(\d+)/i);
+      const digitsOnly = idMatch?.[1]?.replace(/\D/g, '') || '';
       
       if (digitsOnly) {
         setProductId(digitsOnly);
