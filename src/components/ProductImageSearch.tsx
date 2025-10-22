@@ -317,19 +317,6 @@ export const ProductImageSearch = () => {
     
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     
-    // Simple preprocessing to improve OCR (grayscale + threshold)
-    try {
-      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const data = imgData.data;
-      for (let i = 0; i < data.length; i += 4) {
-        const r = data[i], g = data[i + 1], b = data[i + 2];
-        const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-        const v = gray > 160 ? 255 : 0; // threshold
-        data[i] = data[i + 1] = data[i + 2] = v;
-      }
-      ctx.putImageData(imgData, 0, 0);
-    } catch {}
-    
     // Convert to image
     const imageData = canvas.toDataURL('image/jpeg', 0.9);
     setCapturedImage(imageData);
@@ -358,15 +345,15 @@ export const ProductImageSearch = () => {
       });
       
       await worker.setParameters({
-        tessedit_char_whitelist: '0123456789ID:id： ',
-        tessedit_pageseg_mode: PSM.SINGLE_LINE,
+        tessedit_char_whitelist: '0123456789ID:id ',
+        tessedit_pageseg_mode: PSM.AUTO,
       });
       const { data: { text } } = await worker.recognize(capturedImage);
       await worker.terminate();
       
-      // Extract only numbers immediately after "ID :" (supports variations and spaces)
-      const idMatch = text.match(/i\s*d\s*[:：]?\s*([0-9][0-9\s-]*)/i);
-      const digitsOnly = idMatch?.[1]?.replace(/\D/g, '') || '';
+      // Extract only numbers immediately after "ID :" or "ID:"
+      const idMatch = text.match(/ID\s*[:：]\s*(\d+)/i);
+      const digitsOnly = idMatch?.[1] || '';
       
       if (digitsOnly) {
         setProductId(digitsOnly);
