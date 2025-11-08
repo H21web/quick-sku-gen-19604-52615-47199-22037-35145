@@ -34,6 +34,7 @@ export const ProductImageSearch = () => {
   const [isProcessingOCR, setIsProcessingOCR] = useState(false);
   const [extractedText, setExtractedText] = useState<string>('');
   const [detectedIDs, setDetectedIDs] = useState<string[]>([]);
+  const [selectableTexts, setSelectableTexts] = useState<Array<{ text: string; isNumber: boolean }>>([]);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -337,6 +338,7 @@ export const ProductImageSearch = () => {
     setCapturedImage(null);
     setExtractedText('');
     setDetectedIDs([]);
+    setSelectableTexts([]);
     startCamera();
   };
 
@@ -360,22 +362,36 @@ export const ProductImageSearch = () => {
       console.log('Extracted text:', text);
       setExtractedText(text);
       
-      // Find all potential IDs in the text
+      // Parse text into selectable segments
+      const words = text.split(/\s+/).filter(w => w.trim().length > 0);
+      const selectable = words.map(word => {
+        const cleanWord = word.trim();
+        // Check if it's a number (6+ digits for IDs)
+        const isLongNumber = /^\d{6,}$/.test(cleanWord);
+        // Check if it contains digits
+        const hasDigits = /\d/.test(cleanWord);
+        return {
+          text: cleanWord,
+          isNumber: isLongNumber || hasDigits
+        };
+      });
+      
+      setSelectableTexts(selectable);
+      
+      // Also find primary IDs for fallback
       const lines = text.split('\n');
       const foundIDs: string[] = [];
       
       for (const line of lines) {
-        // Look for ID pattern
         if (/ID/i.test(line)) {
           const idMatch = line.match(/ID\s*[:：]?\s*(\d+)/i);
           if (idMatch && idMatch[1]) {
             const digits = idMatch[1].replace(/\D/g, '');
-            if (digits.length >= 6) { // Only IDs with 6+ digits
+            if (digits.length >= 6) {
               foundIDs.push(digits);
             }
           }
         }
-        // Also look for standalone long numbers (likely IDs)
         const numberMatch = line.match(/\b(\d{6,})\b/);
         if (numberMatch && !foundIDs.includes(numberMatch[1])) {
           foundIDs.push(numberMatch[1]);
@@ -384,10 +400,10 @@ export const ProductImageSearch = () => {
       
       setDetectedIDs(foundIDs);
       
-      if (foundIDs.length > 0) {
-        toast.success(`Found ${foundIDs.length} ID(s) - tap to use`);
+      if (selectable.length > 0) {
+        toast.success('Tap any text to search');
       } else {
-        toast.error('No ID found in image');
+        toast.error('No text found in image');
       }
     } catch (error) {
       console.error('OCR error:', error);
@@ -399,8 +415,26 @@ export const ProductImageSearch = () => {
 
   const useDetectedID = (id: string) => {
     setProductId(id);
-    toast.success(`Using ID: ${id}`);
     stopCamera();
+    toast.success(`Searching for: ${id}`);
+    // Trigger search automatically
+    setTimeout(() => {
+      handleSearch();
+    }, 100);
+  };
+
+  const handleTextSelect = (text: string) => {
+    // Clean the text - extract numbers if present
+    const numbers = text.match(/\d+/g);
+    const searchText = numbers ? numbers.join('') : text;
+    
+    setProductId(searchText);
+    stopCamera();
+    toast.success(`Searching for: ${searchText}`);
+    // Auto-search
+    setTimeout(() => {
+      handleSearch();
+    }, 100);
   };
 
   useEffect(() => {
@@ -641,41 +675,67 @@ export const ProductImageSearch = () => {
                     </div>
                   )}
 
-                  {/* Detected IDs Overlay - Google Lens style */}
-                  {!isProcessingOCR && detectedIDs.length > 0 && (
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                      <div className="w-full max-w-md mx-4 space-y-3 pointer-events-auto">
-                        {detectedIDs.map((id, index) => (
-                          <button
-                            key={index}
-                            onClick={() => useDetectedID(id)}
-                            className="w-full bg-primary/90 hover:bg-primary text-primary-foreground rounded-lg px-6 py-4 text-lg font-mono font-semibold shadow-lg transition-all hover:scale-105 active:scale-95"
-                          >
-                            {id}
-                          </button>
-                        ))}
+                  {/* Smart Text Selection - Google Lens style */}
+                  {!isProcessingOCR && selectableTexts.length > 0 && (
+                    <div className="absolute inset-0 p-4 overflow-auto pointer-events-none">
+                      <div className="max-w-2xl mx-auto pointer-events-auto">
+                        {/* Primary IDs at top */}
+                        {detectedIDs.length > 0 && (
+                          <div className="mb-4 space-y-2">
+                            <div className="text-xs text-white/70 font-medium mb-1 px-2">Product IDs</div>
+                            {detectedIDs.map((id, index) => (
+                              <button
+                                key={`id-${index}`}
+                                onClick={() => useDetectedID(id)}
+                                className="w-full bg-primary/95 hover:bg-primary text-primary-foreground rounded-lg px-4 py-3 text-base font-mono font-bold shadow-lg transition-all hover:scale-[1.02] active:scale-95 flex items-center justify-between"
+                              >
+                                <span>{id}</span>
+                                <Search className="w-4 h-4" />
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        
+                        {/* All selectable text */}
+                        <div className="bg-black/60 backdrop-blur-sm rounded-lg p-3">
+                          <div className="text-xs text-white/70 font-medium mb-2 px-1">Tap any text to search</div>
+                          <div className="flex flex-wrap gap-2">
+                            {selectableTexts.map((item, index) => (
+                              <button
+                                key={index}
+                                onClick={() => handleTextSelect(item.text)}
+                                className={`px-3 py-2 rounded-md text-sm font-medium transition-all hover:scale-105 active:scale-95 ${
+                                  item.isNumber
+                                    ? 'bg-primary/80 hover:bg-primary text-primary-foreground font-mono'
+                                    : 'bg-white/20 hover:bg-white/30 text-white'
+                                }`}
+                              >
+                                {item.text}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
                       </div>
                     </div>
                   )}
                 </div>
                 
                 {/* Actions */}
-                <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 to-transparent space-y-3">
-                  {!isProcessingOCR && detectedIDs.length === 0 && (
+                {!isProcessingOCR && selectableTexts.length === 0 && (
+                  <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 to-transparent space-y-3">
                     <p className="text-white text-center text-sm mb-2">
-                      No ID detected. Try retaking with better lighting.
+                      No text detected. Try retaking with better lighting.
                     </p>
-                  )}
-                  <Button 
-                    onClick={retakePhoto}
-                    variant="outline"
-                    className="w-full bg-white/10 hover:bg-white/20 text-white border-white/30"
-                    size="lg"
-                    disabled={isProcessingOCR}
-                  >
-                    Retake Photo
-                  </Button>
-                </div>
+                    <Button 
+                      onClick={retakePhoto}
+                      variant="outline"
+                      className="w-full bg-white/10 hover:bg-white/20 text-white border-white/30"
+                      size="lg"
+                    >
+                      Retake Photo
+                    </Button>
+                  </div>
+                )}
               </>
             )}
           </div>
