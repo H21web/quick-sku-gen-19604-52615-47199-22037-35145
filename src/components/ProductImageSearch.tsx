@@ -32,6 +32,8 @@ export const ProductImageSearch = () => {
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [isProcessingOCR, setIsProcessingOCR] = useState(false);
+  const [extractedText, setExtractedText] = useState<string>('');
+  const [detectedIDs, setDetectedIDs] = useState<string[]>([]);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -301,7 +303,7 @@ export const ProductImageSearch = () => {
     setCapturedImage(null);
   };
 
-  const captureImage = () => {
+  const captureImage = async () => {
     if (!videoRef.current || !canvasRef.current) return;
 
     const video = videoRef.current;
@@ -326,63 +328,79 @@ export const ProductImageSearch = () => {
       cameraStream.getTracks().forEach(track => track.stop());
       setCameraStream(null);
     }
+
+    // Auto-extract text immediately
+    await extractTextFromImage(imageData);
   };
 
   const retakePhoto = () => {
     setCapturedImage(null);
+    setExtractedText('');
+    setDetectedIDs([]);
     startCamera();
   };
 
-  const usePhoto = async () => {
-    if (!capturedImage) return;
-    
+  const extractTextFromImage = async (imageData: string) => {
     setIsProcessingOCR(true);
-    toast.info('Extracting ID...');
     
     try {
       const worker = await createWorker('eng', 1, {
         logger: () => {}, // Disable logging for speed
       });
       
+      // Optimized for speed and digit recognition
       await worker.setParameters({
         tessedit_char_whitelist: '0123456789IDDesc:id ',
         tessedit_pageseg_mode: PSM.SPARSE_TEXT,
       });
-      const { data: { text } } = await worker.recognize(capturedImage);
+      
+      const { data: { text } } = await worker.recognize(imageData);
       await worker.terminate();
       
       console.log('Extracted text:', text);
+      setExtractedText(text);
       
-      // Look for ID pattern before "Desc" - extract the number after "ID :"
+      // Find all potential IDs in the text
       const lines = text.split('\n');
-      let digitsOnly = '';
+      const foundIDs: string[] = [];
       
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        // Check if this line contains ID
+      for (const line of lines) {
+        // Look for ID pattern
         if (/ID/i.test(line)) {
-          // Extract numbers after ID :
           const idMatch = line.match(/ID\s*[:：]?\s*(\d+)/i);
           if (idMatch && idMatch[1]) {
-            digitsOnly = idMatch[1].replace(/\D/g, '');
-            break;
+            const digits = idMatch[1].replace(/\D/g, '');
+            if (digits.length >= 6) { // Only IDs with 6+ digits
+              foundIDs.push(digits);
+            }
           }
+        }
+        // Also look for standalone long numbers (likely IDs)
+        const numberMatch = line.match(/\b(\d{6,})\b/);
+        if (numberMatch && !foundIDs.includes(numberMatch[1])) {
+          foundIDs.push(numberMatch[1]);
         }
       }
       
-      if (digitsOnly) {
-        setProductId(digitsOnly);
-        toast.success(`ID extracted: ${digitsOnly}`);
+      setDetectedIDs(foundIDs);
+      
+      if (foundIDs.length > 0) {
+        toast.success(`Found ${foundIDs.length} ID(s) - tap to use`);
       } else {
-        toast.error('No ID found. Looking for "ID : [numbers]"');
+        toast.error('No ID found in image');
       }
     } catch (error) {
       console.error('OCR error:', error);
-      toast.error('Failed to extract ID from image');
+      toast.error('Failed to extract text from image');
     } finally {
       setIsProcessingOCR(false);
-      stopCamera();
     }
+  };
+
+  const useDetectedID = (id: string) => {
+    setProductId(id);
+    toast.success(`Using ID: ${id}`);
+    stopCamera();
   };
 
   useEffect(() => {
@@ -606,37 +624,56 @@ export const ProductImageSearch = () => {
             ) : (
               <>
                 {/* Captured Image Preview */}
-                <img 
-                  src={capturedImage} 
-                  alt="Captured" 
-                  className="w-full h-full object-contain"
-                />
+                <div className="relative w-full h-full">
+                  <img 
+                    src={capturedImage} 
+                    alt="Captured" 
+                    className="w-full h-full object-contain"
+                  />
+                  
+                  {/* Processing Overlay */}
+                  {isProcessingOCR && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                      <div className="bg-background/90 backdrop-blur-sm rounded-lg p-4 flex items-center gap-3">
+                        <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+                        <span className="text-foreground">Extracting text...</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Detected IDs Overlay - Google Lens style */}
+                  {!isProcessingOCR && detectedIDs.length > 0 && (
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                      <div className="w-full max-w-md mx-4 space-y-3 pointer-events-auto">
+                        {detectedIDs.map((id, index) => (
+                          <button
+                            key={index}
+                            onClick={() => useDetectedID(id)}
+                            className="w-full bg-primary/90 hover:bg-primary text-primary-foreground rounded-lg px-6 py-4 text-lg font-mono font-semibold shadow-lg transition-all hover:scale-105 active:scale-95"
+                          >
+                            {id}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
                 
                 {/* Actions */}
                 <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 to-transparent space-y-3">
-                  <Button 
-                    onClick={usePhoto}
-                    className="w-full"
-                    size="lg"
-                    disabled={isProcessingOCR}
-                  >
-                    {isProcessingOCR ? (
-                      <>
-                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" />
-                        Extracting Text...
-                      </>
-                    ) : (
-                      'Extract Text'
-                    )}
-                  </Button>
+                  {!isProcessingOCR && detectedIDs.length === 0 && (
+                    <p className="text-white text-center text-sm mb-2">
+                      No ID detected. Try retaking with better lighting.
+                    </p>
+                  )}
                   <Button 
                     onClick={retakePhoto}
                     variant="outline"
-                    className="w-full"
+                    className="w-full bg-white/10 hover:bg-white/20 text-white border-white/30"
                     size="lg"
                     disabled={isProcessingOCR}
                   >
-                    Retake
+                    Retake Photo
                   </Button>
                 </div>
               </>
