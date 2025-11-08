@@ -35,13 +35,8 @@ export const ProductImageSearch = () => {
   const [extractedText, setExtractedText] = useState<string>('');
   const [detectedIDs, setDetectedIDs] = useState<string[]>([]);
   const [selectableTexts, setSelectableTexts] = useState<Array<{ text: string; isNumber: boolean }>>([]);
-  const [isSelectingRegion, setIsSelectingRegion] = useState(false);
-  const [selectionStart, setSelectionStart] = useState<{ x: number; y: number } | null>(null);
-  const [selectionEnd, setSelectionEnd] = useState<{ x: number; y: number } | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const selectionCanvasRef = useRef<HTMLCanvasElement>(null);
-  const capturedImageRef = useRef<HTMLImageElement>(null);
 
   const handleSearch = async () => {
     if (!productId.trim()) {
@@ -344,9 +339,6 @@ export const ProductImageSearch = () => {
     setExtractedText('');
     setDetectedIDs([]);
     setSelectableTexts([]);
-    setIsSelectingRegion(false);
-    setSelectionStart(null);
-    setSelectionEnd(null);
     startCamera();
   };
 
@@ -443,140 +435,6 @@ export const ProductImageSearch = () => {
     setTimeout(() => {
       handleSearch();
     }, 100);
-  };
-
-  const startRegionSelection = () => {
-    setIsSelectingRegion(true);
-    setSelectionStart(null);
-    setSelectionEnd(null);
-    setSelectableTexts([]);
-    setDetectedIDs([]);
-    toast.info('Draw a box around the text you want to extract');
-  };
-
-  const handleSelectionStart = (e: React.TouchEvent | React.MouseEvent) => {
-    if (!isSelectingRegion || !capturedImageRef.current) return;
-    
-    const rect = capturedImageRef.current.getBoundingClientRect();
-    let clientX: number, clientY: number;
-    
-    if ('touches' in e) {
-      clientX = e.touches[0].clientX;
-      clientY = e.touches[0].clientY;
-    } else {
-      clientX = e.clientX;
-      clientY = e.clientY;
-    }
-    
-    const x = ((clientX - rect.left) / rect.width) * 100;
-    const y = ((clientY - rect.top) / rect.height) * 100;
-    
-    setSelectionStart({ x, y });
-    setSelectionEnd({ x, y });
-  };
-
-  const handleSelectionMove = (e: React.TouchEvent | React.MouseEvent) => {
-    if (!isSelectingRegion || !selectionStart || !capturedImageRef.current) return;
-    
-    e.preventDefault();
-    const rect = capturedImageRef.current.getBoundingClientRect();
-    let clientX: number, clientY: number;
-    
-    if ('touches' in e) {
-      clientX = e.touches[0].clientX;
-      clientY = e.touches[0].clientY;
-    } else {
-      clientX = e.clientX;
-      clientY = e.clientY;
-    }
-    
-    const x = ((clientX - rect.left) / rect.width) * 100;
-    const y = ((clientY - rect.top) / rect.height) * 100;
-    
-    setSelectionEnd({ x, y });
-  };
-
-  const handleSelectionEnd = async () => {
-    if (!isSelectingRegion || !selectionStart || !selectionEnd || !capturedImage || !capturedImageRef.current) return;
-    
-    // Calculate selection box
-    const left = Math.min(selectionStart.x, selectionEnd.x);
-    const top = Math.min(selectionStart.y, selectionEnd.y);
-    const width = Math.abs(selectionEnd.x - selectionStart.x);
-    const height = Math.abs(selectionEnd.y - selectionStart.y);
-    
-    if (width < 5 || height < 5) {
-      toast.error('Selection too small. Draw a larger box.');
-      setSelectionStart(null);
-      setSelectionEnd(null);
-      return;
-    }
-    
-    // Crop the image
-    const img = capturedImageRef.current;
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    
-    // Calculate pixel coordinates
-    const cropX = (left / 100) * img.naturalWidth;
-    const cropY = (top / 100) * img.naturalHeight;
-    const cropWidth = (width / 100) * img.naturalWidth;
-    const cropHeight = (height / 100) * img.naturalHeight;
-    
-    canvas.width = cropWidth;
-    canvas.height = cropHeight;
-    
-    ctx.drawImage(
-      img,
-      cropX, cropY, cropWidth, cropHeight,
-      0, 0, cropWidth, cropHeight
-    );
-    
-    const croppedImage = canvas.toDataURL('image/jpeg', 0.9);
-    
-    // Run OCR on cropped region
-    setIsProcessingOCR(true);
-    setIsSelectingRegion(false);
-    
-    try {
-      const worker = await createWorker('eng', 1, {
-        logger: () => {},
-      });
-      
-      await worker.setParameters({
-        tessedit_char_whitelist: '0123456789IDDesc:id ',
-        tessedit_pageseg_mode: PSM.SPARSE_TEXT,
-      });
-      
-      const { data: { text } } = await worker.recognize(croppedImage);
-      await worker.terminate();
-      
-      console.log('Extracted from selection:', text);
-      
-      // Extract best ID or number
-      const numbers = text.match(/\d+/g);
-      if (numbers && numbers.length > 0) {
-        const bestMatch = numbers.find(n => n.length >= 6) || numbers[0];
-        setProductId(bestMatch);
-        toast.success(`Found: ${bestMatch}`);
-        
-        // Auto-search
-        setTimeout(() => {
-          stopCamera();
-          handleSearch();
-        }, 500);
-      } else {
-        toast.error('No numbers found in selection');
-      }
-    } catch (error) {
-      console.error('OCR error:', error);
-      toast.error('Failed to extract text');
-    } finally {
-      setIsProcessingOCR(false);
-      setSelectionStart(null);
-      setSelectionEnd(null);
-    }
   };
 
   useEffect(() => {
@@ -800,40 +658,12 @@ export const ProductImageSearch = () => {
             ) : (
               <>
                 {/* Captured Image Preview */}
-                <div 
-                  className="relative w-full h-full"
-                  onTouchStart={handleSelectionStart}
-                  onTouchMove={handleSelectionMove}
-                  onTouchEnd={handleSelectionEnd}
-                  onMouseDown={handleSelectionStart}
-                  onMouseMove={handleSelectionMove}
-                  onMouseUp={handleSelectionEnd}
-                >
+                <div className="relative w-full h-full">
                   <img 
-                    ref={capturedImageRef}
                     src={capturedImage} 
                     alt="Captured" 
-                    className="w-full h-full object-contain select-none"
-                    draggable={false}
+                    className="w-full h-full object-contain"
                   />
-                  
-                  {/* Selection Box Overlay */}
-                  {isSelectingRegion && selectionStart && selectionEnd && (
-                    <div 
-                      className="absolute border-2 border-primary bg-primary/20 pointer-events-none"
-                      style={{
-                        left: `${Math.min(selectionStart.x, selectionEnd.x)}%`,
-                        top: `${Math.min(selectionStart.y, selectionEnd.y)}%`,
-                        width: `${Math.abs(selectionEnd.x - selectionStart.x)}%`,
-                        height: `${Math.abs(selectionEnd.y - selectionStart.y)}%`,
-                      }}
-                    >
-                      <div className="absolute -top-1 -left-1 w-3 h-3 bg-primary rounded-full" />
-                      <div className="absolute -top-1 -right-1 w-3 h-3 bg-primary rounded-full" />
-                      <div className="absolute -bottom-1 -left-1 w-3 h-3 bg-primary rounded-full" />
-                      <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-primary rounded-full" />
-                    </div>
-                  )}
                   
                   {/* Processing Overlay */}
                   {isProcessingOCR && (
@@ -846,7 +676,7 @@ export const ProductImageSearch = () => {
                   )}
 
                   {/* Smart Text Selection - Google Lens style */}
-                  {!isProcessingOCR && !isSelectingRegion && selectableTexts.length > 0 && (
+                  {!isProcessingOCR && selectableTexts.length > 0 && (
                     <div className="absolute inset-0 p-4 overflow-auto pointer-events-none">
                       <div className="max-w-2xl mx-auto pointer-events-auto">
                         {/* Primary IDs at top */}
@@ -888,51 +718,22 @@ export const ProductImageSearch = () => {
                       </div>
                     </div>
                   )}
-                  
-                  {/* Region Selection Mode Instructions */}
-                  {isSelectingRegion && (
-                    <div className="absolute top-4 left-4 right-4 bg-primary/95 backdrop-blur-sm rounded-lg p-3 text-primary-foreground text-center font-medium shadow-lg">
-                      Draw a box around the text you want to extract
-                    </div>
-                  )}
                 </div>
                 
-                {/* Action Buttons */}
-                {!isProcessingOCR && (
-                  <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/90 via-black/70 to-transparent">
-                    {selectableTexts.length === 0 && !isSelectingRegion ? (
-                      <div className="space-y-3">
-                        <p className="text-white text-center text-sm mb-2">
-                          No text detected. Try selecting a region or retake photo.
-                        </p>
-                        <div className="grid grid-cols-2 gap-2">
-                          <Button 
-                            onClick={startRegionSelection}
-                            className="w-full"
-                            size="lg"
-                          >
-                            Select Region
-                          </Button>
-                          <Button 
-                            onClick={retakePhoto}
-                            variant="outline"
-                            className="w-full bg-white/10 hover:bg-white/20 text-white border-white/30"
-                            size="lg"
-                          >
-                            Retake
-                          </Button>
-                        </div>
-                      </div>
-                    ) : !isSelectingRegion && (
-                      <Button 
-                        onClick={startRegionSelection}
-                        variant="outline"
-                        className="w-full bg-white/10 hover:bg-white/20 text-white border-white/30"
-                        size="lg"
-                      >
-                        Select Specific Region
-                      </Button>
-                    )}
+                {/* Actions */}
+                {!isProcessingOCR && selectableTexts.length === 0 && (
+                  <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 to-transparent space-y-3">
+                    <p className="text-white text-center text-sm mb-2">
+                      No text detected. Try retaking with better lighting.
+                    </p>
+                    <Button 
+                      onClick={retakePhoto}
+                      variant="outline"
+                      className="w-full bg-white/10 hover:bg-white/20 text-white border-white/30"
+                      size="lg"
+                    >
+                      Retake Photo
+                    </Button>
                   </div>
                 )}
               </>
