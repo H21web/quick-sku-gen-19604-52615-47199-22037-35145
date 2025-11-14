@@ -1,13 +1,13 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
-import { Search, X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Scan } from 'lucide-react';
+import { Search, X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Scan, ExternalLink } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
 import { toast } from 'sonner';
 import { extractAllProductImages } from '@/lib/imageExtractor';
 import { getRandomApiKey, GOOGLE_SEARCH_ENGINE_ID } from '@/lib/config';
 import { Skeleton } from './ui/skeleton';
-import { createWorker, PSM } from 'tesseract.js';
+import { createWorker, PSM, Worker } from 'tesseract.js';
 
 interface ImageResult {
   imageUrl: string;
@@ -35,10 +35,13 @@ export const ProductImageSearch = () => {
   const [extractedText, setExtractedText] = useState<string>('');
   const [detectedIDs, setDetectedIDs] = useState<string[]>([]);
   const [selectableTexts, setSelectableTexts] = useState<Array<{ text: string; isNumber: boolean }>>([]);
+  const [jiomartUrl, setJiomartUrl] = useState<string>('');
+  const [showIframe, setShowIframe] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const ocrWorkerRef = useRef<Worker | null>(null);
 
-  const handleSearch = async () => {
+  const handleSearch = useCallback(async () => {
     if (!productId.trim()) {
       toast.error('Please enter a product ID');
       return;
@@ -51,31 +54,45 @@ export const ProductImageSearch = () => {
 
     setLoading(true);
     setExtractedImages([]);
+    setJiomartUrl('');
     
     try {
       const apiKey = getRandomApiKey();
       const query = `site:jiomart.com ${productId}`;
-      const searchUrl = `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&searchType=image&num=5&fields=items(link)`;
       
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000); // Increased timeout
-      const response = await fetch(searchUrl, { signal: controller.signal });
-      clearTimeout(timeoutId);
+      // Parallel search for both images and web results
+      const [imageResponse, webResponse] = await Promise.all([
+        fetch(`https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&searchType=image&num=5&fields=items(link)`),
+        fetch(`https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&num=1&fields=items(link)`)
+      ]);
 
-      if (!response.ok) {
-        const errorData = await response.json();
+      if (!imageResponse.ok) {
+        const errorData = await imageResponse.json();
         console.error('Google API error:', errorData);
         throw new Error(errorData.error?.message || 'Failed to fetch images');
       }
-      const data = await response.json();
+
+      const [imageData, webData] = await Promise.all([
+        imageResponse.json(),
+        webResponse.json()
+      ]);
       
-      if (!data.items || data.items.length === 0) {
+      // Extract JioMart product page URL
+      if (webData.items && webData.items.length > 0) {
+        const productUrl = webData.items[0].link;
+        if (productUrl.includes('jiomart.com')) {
+          setJiomartUrl(productUrl);
+          setShowIframe(true);
+        }
+      }
+      
+      if (!imageData.items || imageData.items.length === 0) {
         toast.error('No images found for this product ID');
         return;
       }
 
       // Get all initial links
-      const initialLinks: string[] = data.items.map((item: any) => item.link);
+      const initialLinks: string[] = imageData.items.map((item: any) => item.link);
       const initialUnique = Array.from(new Set(initialLinks));
       
       // Extract all JioMart images upfront
@@ -101,13 +118,13 @@ export const ProductImageSearch = () => {
       
       setExtractedImages(highQualityImages);
       toast.success(`Found ${highQualityImages.length} images`);
-    } catch (error) {
-      toast.error('Failed to fetch product images');
-      console.error('Error:', error);
+    } catch (error: any) {
+      console.error('Search error:', error);
+      toast.error(error.message || 'Failed to search. Please try again.');
     } finally {
       setLoading(false);
     }
-  };
+  }, [productId]);
 
   const openImage = (index: number) => {
     setSelectedImageIndex(index);
@@ -342,33 +359,103 @@ export const ProductImageSearch = () => {
     startCamera();
   };
 
+  // Initialize OCR worker once and reuse
+  useEffect(() => {
+    const initWorker = async () => {
+      try {
+        const worker = await createWorker('eng', 1, {
+          logger: () => {}, // Disable logging for speed
+        });
+        ocrWorkerRef.current = worker;
+      } catch (error) {
+        console.error('Failed to initialize OCR worker:', error);
+      }
+    };
+    
+    initWorker();
+    
+    return () => {
+      if (ocrWorkerRef.current) {
+        ocrWorkerRef.current.terminate();
+      }
+    };
+  }, []);
+
+  // Pre-process image for better OCR
+  const preprocessImage = (imageData: string): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d')!;
+        
+        // Scale up for better recognition
+        const scale = 2;
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+        
+        // Draw with enhanced contrast
+        ctx.filter = 'contrast(1.5) brightness(1.1)';
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        
+        // Convert to grayscale for better OCR
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+        for (let i = 0; i < data.length; i += 4) {
+          const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+          data[i] = data[i + 1] = data[i + 2] = gray;
+        }
+        ctx.putImageData(imageData, 0, 0);
+        
+        resolve(canvas.toDataURL('image/jpeg', 0.95));
+      };
+      img.src = imageData;
+    });
+  };
+
   const extractTextFromImage = async (imageData: string) => {
     setIsProcessingOCR(true);
     
     try {
-      const worker = await createWorker('eng', 1, {
-        logger: () => {}, // Disable logging for speed
-      });
+      // Pre-process image for better OCR
+      const processedImage = await preprocessImage(imageData);
       
-      // Optimized for speed and digit recognition
-      await worker.setParameters({
-        tessedit_char_whitelist: '0123456789IDDesc:id ',
-        tessedit_pageseg_mode: PSM.SPARSE_TEXT,
-      });
+      // Use cached worker or create new one
+      let worker = ocrWorkerRef.current;
+      if (!worker) {
+        worker = await createWorker('eng', 1, {
+          logger: () => {},
+        });
+      }
       
-      const { data: { text } } = await worker.recognize(imageData);
-      await worker.terminate();
+      // Run multiple OCR passes in parallel for better accuracy
+      const [sparseResult, autoResult] = await Promise.all([
+        (async () => {
+          await worker!.setParameters({
+            tessedit_char_whitelist: '0123456789IDDesc:id ',
+            tessedit_pageseg_mode: PSM.SPARSE_TEXT,
+          });
+          return await worker!.recognize(processedImage);
+        })(),
+        (async () => {
+          await worker!.setParameters({
+            tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ',
+            tessedit_pageseg_mode: PSM.AUTO,
+          });
+          return await worker!.recognize(processedImage);
+        })()
+      ]);
       
-      console.log('Extracted text:', text);
-      setExtractedText(text);
+      // Combine results
+      const combinedText = `${sparseResult.data.text}\n${autoResult.data.text}`;
+      console.log('Extracted text:', combinedText);
+      setExtractedText(combinedText);
       
       // Parse text into selectable segments
-      const words = text.split(/\s+/).filter(w => w.trim().length > 0);
+      const words = combinedText.split(/\s+/).filter(w => w.trim().length > 0);
       const selectable = words.map(word => {
         const cleanWord = word.trim();
-        // Check if it's a number (6+ digits for IDs)
         const isLongNumber = /^\d{6,}$/.test(cleanWord);
-        // Check if it contains digits
         const hasDigits = /\d/.test(cleanWord);
         return {
           text: cleanWord,
@@ -378,11 +465,12 @@ export const ProductImageSearch = () => {
       
       setSelectableTexts(selectable);
       
-      // Also find primary IDs for fallback
-      const lines = text.split('\n');
+      // Find primary IDs
+      const lines = combinedText.split('\n');
       const foundIDs: string[] = [];
       
       for (const line of lines) {
+        // Look for "ID:" patterns
         if (/ID/i.test(line)) {
           const idMatch = line.match(/ID\s*[:：]?\s*(\d+)/i);
           if (idMatch && idMatch[1]) {
@@ -392,22 +480,24 @@ export const ProductImageSearch = () => {
             }
           }
         }
+        // Look for standalone long numbers
         const numberMatch = line.match(/\b(\d{6,})\b/);
         if (numberMatch && !foundIDs.includes(numberMatch[1])) {
           foundIDs.push(numberMatch[1]);
         }
       }
       
-      setDetectedIDs(foundIDs);
+      const uniqueIDs = Array.from(new Set(foundIDs));
+      setDetectedIDs(uniqueIDs);
       
-      if (selectable.length > 0) {
-        toast.success('Tap any text to search');
+      if (uniqueIDs.length === 0) {
+        toast.info('No IDs detected. Tap any text to search.');
       } else {
-        toast.error('No text found in image');
+        toast.success(`Detected ${uniqueIDs.length} ID(s)`);
       }
     } catch (error) {
       console.error('OCR error:', error);
-      toast.error('Failed to extract text from image');
+      toast.error('Failed to extract text. Please try again.');
     } finally {
       setIsProcessingOCR(false);
     }
@@ -470,6 +560,40 @@ export const ProductImageSearch = () => {
           {loading ? 'Finding...' : 'Find'}
         </Button>
       </div>
+
+      {/* JioMart Product Page */}
+      {jiomartUrl && showIframe && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium">Product Page</h3>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => window.open(jiomartUrl, '_blank')}
+              >
+                <ExternalLink className="w-4 h-4 mr-1" />
+                Open
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowIframe(false)}
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+          <div className="relative w-full h-[500px] rounded-lg border border-border overflow-hidden bg-background">
+            <iframe
+              src={jiomartUrl}
+              className="w-full h-full"
+              title="JioMart Product Page"
+              sandbox="allow-scripts allow-same-origin allow-popups"
+            />
+          </div>
+        </div>
+      )}
 
       {/* Extracted Images Grid */}
       {extractedImages.length > 0 && (
