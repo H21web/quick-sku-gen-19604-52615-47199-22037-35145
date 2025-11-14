@@ -36,7 +36,6 @@ export const ProductImageSearch = () => {
   const [detectedIDs, setDetectedIDs] = useState<string[]>([]);
   const [selectableTexts, setSelectableTexts] = useState<Array<{ text: string; isNumber: boolean }>>([]);
   const [jiomartUrl, setJiomartUrl] = useState<string>('');
-  const [showIframe, setShowIframe] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const ocrWorkerRef = useRef<Worker | null>(null);
@@ -82,7 +81,6 @@ export const ProductImageSearch = () => {
         const productUrl = webData.items[0].link;
         if (productUrl.includes('jiomart.com')) {
           setJiomartUrl(productUrl);
-          setShowIframe(true);
         }
       }
       
@@ -381,7 +379,7 @@ export const ProductImageSearch = () => {
     };
   }, []);
 
-  // Pre-process image for better OCR
+  // Advanced pre-processing for blur/shaky images
   const preprocessImage = (imageData: string): Promise<string> => {
     return new Promise((resolve) => {
       const img = new Image();
@@ -389,25 +387,45 @@ export const ProductImageSearch = () => {
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d')!;
         
-        // Scale up for better recognition
-        const scale = 2;
+        // Scale up significantly for better recognition of blur/shaky images
+        const scale = 3;
         canvas.width = img.width * scale;
         canvas.height = img.height * scale;
         
-        // Draw with enhanced contrast
-        ctx.filter = 'contrast(1.5) brightness(1.1)';
+        // Apply aggressive sharpening and contrast for blur/shaky images
+        ctx.filter = 'contrast(2) brightness(1.2) saturate(0)';
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         
-        // Convert to grayscale for better OCR
+        // Get image data for advanced processing
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const data = imageData.data;
+        
+        // Convert to grayscale with enhanced contrast
         for (let i = 0; i < data.length; i += 4) {
           const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-          data[i] = data[i + 1] = data[i + 2] = gray;
+          // Apply threshold for better text detection
+          const threshold = gray > 128 ? 255 : 0;
+          data[i] = data[i + 1] = data[i + 2] = threshold;
         }
+        
         ctx.putImageData(imageData, 0, 0);
         
-        resolve(canvas.toDataURL('image/jpeg', 0.95));
+        // Apply unsharp mask for blur reduction
+        const tempCanvas = document.createElement('canvas');
+        const tempCtx = tempCanvas.getContext('2d')!;
+        tempCanvas.width = canvas.width;
+        tempCanvas.height = canvas.height;
+        tempCtx.filter = 'blur(1px)';
+        tempCtx.drawImage(canvas, 0, 0);
+        
+        // Combine original and blurred for sharpening
+        ctx.globalAlpha = 1.5;
+        ctx.drawImage(canvas, 0, 0);
+        ctx.globalAlpha = -0.5;
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.drawImage(tempCanvas, 0, 0);
+        
+        resolve(canvas.toDataURL('image/jpeg', 0.98));
       };
       img.src = imageData;
     });
@@ -465,25 +483,28 @@ export const ProductImageSearch = () => {
       
       setSelectableTexts(selectable);
       
-      // Find primary IDs
+      // Find primary IDs - ONLY extract text AFTER "ID : "
       const lines = combinedText.split('\n');
       const foundIDs: string[] = [];
       
       for (const line of lines) {
-        // Look for "ID:" patterns
-        if (/ID/i.test(line)) {
-          const idMatch = line.match(/ID\s*[:：]?\s*(\d+)/i);
-          if (idMatch && idMatch[1]) {
-            const digits = idMatch[1].replace(/\D/g, '');
-            if (digits.length >= 6) {
-              foundIDs.push(digits);
-            }
+        // Look for "ID:" or "ID :" patterns and extract ONLY the digits after it
+        const idMatch = line.match(/ID\s*[:：]\s*(\d+)/i);
+        if (idMatch && idMatch[1]) {
+          const cleanID = idMatch[1].trim();
+          if (cleanID.length >= 6 && !foundIDs.includes(cleanID)) {
+            foundIDs.push(cleanID);
           }
         }
-        // Look for standalone long numbers
-        const numberMatch = line.match(/\b(\d{6,})\b/);
-        if (numberMatch && !foundIDs.includes(numberMatch[1])) {
-          foundIDs.push(numberMatch[1]);
+      }
+      
+      // Only add standalone numbers if no ID pattern was found
+      if (foundIDs.length === 0) {
+        for (const line of lines) {
+          const numberMatch = line.match(/\b(\d{8,})\b/);
+          if (numberMatch && !foundIDs.includes(numberMatch[1])) {
+            foundIDs.push(numberMatch[1]);
+          }
         }
       }
       
@@ -561,44 +582,24 @@ export const ProductImageSearch = () => {
         </Button>
       </div>
 
-      {/* JioMart Product Page */}
-      {jiomartUrl && showIframe && (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-medium">Product Page</h3>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => window.open(jiomartUrl, '_blank')}
-              >
-                <ExternalLink className="w-4 h-4 mr-1" />
-                Open
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowIframe(false)}
-              >
-                <X className="w-4 h-4" />
-              </Button>
-            </div>
-          </div>
-          <div className="relative w-full h-[500px] rounded-lg border border-border overflow-hidden bg-background">
-            <iframe
-              src={jiomartUrl}
-              className="w-full h-full"
-              title="JioMart Product Page"
-              sandbox="allow-scripts allow-same-origin allow-popups"
-            />
-          </div>
-        </div>
-      )}
 
       {/* Extracted Images Grid */}
       {extractedImages.length > 0 && (
-        <div className="space-y-2">
-          <h3 className="text-sm font-medium">Product Images ({extractedImages.length})</h3>
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium">Product Images ({extractedImages.length})</h3>
+            {jiomartUrl && (
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => window.open(jiomartUrl, '_blank')}
+                className="gap-2"
+              >
+                <ExternalLink className="w-4 h-4" />
+                Open Product Page
+              </Button>
+            )}
+          </div>
           <div className="columns-2 sm:columns-3 md:columns-4 gap-3 [column-fill:_balance]">
             {extractedImages.map((url, index) => (
               <div
@@ -610,7 +611,7 @@ export const ProductImageSearch = () => {
                   src={url}
                   alt={`Product image ${index + 1}`}
                   className="w-full h-auto object-cover transition-all duration-300 group-hover:opacity-90"
-                  loading="eager"
+                  loading="lazy"
                 />
               </div>
             ))}
