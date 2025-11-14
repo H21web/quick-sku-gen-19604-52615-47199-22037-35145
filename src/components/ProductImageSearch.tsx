@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
-import { Search, X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Scan, ExternalLink } from 'lucide-react';
+import { Search, X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Scan, ExternalLink, History } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
 import { toast } from 'sonner';
 import { extractAllProductImages } from '@/lib/imageExtractor';
@@ -12,6 +12,13 @@ import { createWorker, PSM, Worker } from 'tesseract.js';
 interface ImageResult {
   imageUrl: string;
   title: string;
+}
+
+interface SearchHistoryItem {
+  id: string;
+  productId: string;
+  timestamp: number;
+  jiomartUrl?: string;
 }
 
 export const ProductImageSearch = () => {
@@ -36,9 +43,37 @@ export const ProductImageSearch = () => {
   const [detectedIDs, setDetectedIDs] = useState<string[]>([]);
   const [selectableTexts, setSelectableTexts] = useState<Array<{ text: string; isNumber: boolean }>>([]);
   const [jiomartUrl, setJiomartUrl] = useState<string>('');
+  const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>([]);
+  const [showHistoryDialog, setShowHistoryDialog] = useState(false);
+  const [isSelectingRegion, setIsSelectingRegion] = useState(false);
+  const [selectionStart, setSelectionStart] = useState<{ x: number; y: number } | null>(null);
+  const [selectionEnd, setSelectionEnd] = useState<{ x: number; y: number } | null>(null);
+  const capturedImageRef = useRef<HTMLImageElement | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const ocrWorkerRef = useRef<Worker | null>(null);
+
+  // Load search history from localStorage
+  useEffect(() => {
+    const savedHistory = localStorage.getItem('searchHistory');
+    if (savedHistory) {
+      setSearchHistory(JSON.parse(savedHistory));
+    }
+  }, []);
+
+  // Save search to history
+  const saveToHistory = useCallback((productId: string, jiomartUrl?: string) => {
+    const newHistoryItem: SearchHistoryItem = {
+      id: Date.now().toString(),
+      productId,
+      timestamp: Date.now(),
+      jiomartUrl
+    };
+    
+    const updatedHistory = [newHistoryItem, ...searchHistory].slice(0, 20); // Keep last 20
+    setSearchHistory(updatedHistory);
+    localStorage.setItem('searchHistory', JSON.stringify(updatedHistory));
+  }, [searchHistory]);
 
   const handleSearch = useCallback(async () => {
     if (!productId.trim()) {
@@ -77,12 +112,17 @@ export const ProductImageSearch = () => {
       ]);
       
       // Extract JioMart product page URL
+      let foundUrl = '';
       if (webData.items && webData.items.length > 0) {
         const productUrl = webData.items[0].link;
         if (productUrl.includes('jiomart.com')) {
           setJiomartUrl(productUrl);
+          foundUrl = productUrl;
         }
       }
+      
+      // Save to history
+      saveToHistory(productId, foundUrl);
       
       if (!imageData.items || imageData.items.length === 0) {
         toast.error('No images found for this product ID');
@@ -354,7 +394,120 @@ export const ProductImageSearch = () => {
     setExtractedText('');
     setDetectedIDs([]);
     setSelectableTexts([]);
+    setIsSelectingRegion(false);
+    setSelectionStart(null);
+    setSelectionEnd(null);
     startCamera();
+  };
+
+  const startRegionSelection = () => {
+    setIsSelectingRegion(true);
+    setSelectionStart(null);
+    setSelectionEnd(null);
+    toast.info('Draw a box around the ID text');
+  };
+
+  const handleSelectionStart = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
+    if (!isSelectingRegion) return;
+    
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = 'touches' in e ? e.touches[0].clientX - rect.left : e.clientX - rect.left;
+    const y = 'touches' in e ? e.touches[0].clientY - rect.top : e.clientY - rect.top;
+    
+    setSelectionStart({ x, y });
+    setSelectionEnd({ x, y });
+  };
+
+  const handleSelectionMove = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
+    if (!isSelectingRegion || !selectionStart) return;
+    
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = 'touches' in e ? e.touches[0].clientX - rect.left : e.clientX - rect.left;
+    const y = 'touches' in e ? e.touches[0].clientY - rect.top : e.clientY - rect.top;
+    
+    setSelectionEnd({ x, y });
+  };
+
+  const handleSelectionEnd = async () => {
+    if (!isSelectingRegion || !selectionStart || !selectionEnd || !capturedImage) return;
+    
+    setIsSelectingRegion(false);
+    setIsProcessingOCR(true);
+
+    try {
+      const img = capturedImageRef.current;
+      if (!img) return;
+
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      // Calculate selection bounds
+      const x = Math.min(selectionStart.x, selectionEnd.x);
+      const y = Math.min(selectionStart.y, selectionEnd.y);
+      const width = Math.abs(selectionEnd.x - selectionStart.x);
+      const height = Math.abs(selectionEnd.y - selectionStart.y);
+
+      // Scale to actual image dimensions
+      const scaleX = img.naturalWidth / img.width;
+      const scaleY = img.naturalHeight / img.height;
+
+      canvas.width = width * scaleX;
+      canvas.height = height * scaleY;
+
+      ctx.drawImage(
+        img,
+        x * scaleX,
+        y * scaleY,
+        width * scaleX,
+        height * scaleY,
+        0,
+        0,
+        canvas.width,
+        canvas.height
+      );
+
+      // Preprocess cropped image
+      const croppedDataUrl = canvas.toDataURL('image/png');
+      const preprocessed = await preprocessImage(croppedDataUrl);
+
+      // OCR on selected region only
+      if (!ocrWorkerRef.current) {
+        ocrWorkerRef.current = await createWorker('eng', 1, {
+          cachePath: '.',
+          cacheMethod: 'write'
+        });
+      }
+
+      await ocrWorkerRef.current.setParameters({
+        tessedit_char_whitelist: '0123456789IDid: ',
+        tessedit_pageseg_mode: PSM.SPARSE_TEXT,
+      });
+
+      const { data } = await ocrWorkerRef.current.recognize(preprocessed);
+      const text = data.text.trim();
+      setExtractedText(text);
+
+      // Extract ID
+      const idMatch = text.match(/ID\s*:?\s*(\d+)/i);
+      const extractedId = idMatch ? idMatch[1] : text.match(/\d{8,}/)?.[0] || '';
+
+      if (extractedId) {
+        setProductId(extractedId);
+        setShowCameraDialog(false);
+        stopCamera();
+        setTimeout(() => handleSearch(), 100);
+      } else {
+        toast.error('No ID found in selected region');
+      }
+    } catch (error) {
+      console.error('Region OCR error:', error);
+      toast.error('Failed to extract text from region');
+    } finally {
+      setIsProcessingOCR(false);
+      setSelectionStart(null);
+      setSelectionEnd(null);
+    }
   };
 
   // Initialize OCR worker once and reuse
@@ -783,12 +936,34 @@ export const ProductImageSearch = () => {
             ) : (
               <>
                 {/* Captured Image Preview */}
-                <div className="relative w-full h-full">
+                <div 
+                  className="relative w-full h-full cursor-crosshair"
+                  onMouseDown={handleSelectionStart}
+                  onMouseMove={handleSelectionMove}
+                  onMouseUp={handleSelectionEnd}
+                  onTouchStart={handleSelectionStart}
+                  onTouchMove={handleSelectionMove}
+                  onTouchEnd={handleSelectionEnd}
+                >
                   <img 
+                    ref={capturedImageRef}
                     src={capturedImage} 
                     alt="Captured" 
                     className="w-full h-full object-contain"
                   />
+                  
+                  {/* Region Selection Overlay */}
+                  {isSelectingRegion && selectionStart && selectionEnd && (
+                    <div
+                      className="absolute border-2 border-primary bg-primary/20 pointer-events-none"
+                      style={{
+                        left: Math.min(selectionStart.x, selectionEnd.x),
+                        top: Math.min(selectionStart.y, selectionEnd.y),
+                        width: Math.abs(selectionEnd.x - selectionStart.x),
+                        height: Math.abs(selectionEnd.y - selectionStart.y),
+                      }}
+                    />
+                  )}
                   
                   {/* Processing Overlay */}
                   {isProcessingOCR && (
@@ -849,16 +1024,34 @@ export const ProductImageSearch = () => {
                 {!isProcessingOCR && selectableTexts.length === 0 && (
                   <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 to-transparent space-y-3">
                     <p className="text-white text-center text-sm mb-2">
-                      No text detected. Try retaking with better lighting.
+                      {isSelectingRegion ? 'Draw a box around the ID text' : 'Choose an option'}
                     </p>
-                    <Button 
-                      onClick={retakePhoto}
-                      variant="outline"
-                      className="w-full bg-white/10 hover:bg-white/20 text-white border-white/30"
-                      size="lg"
-                    >
-                      Retake Photo
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button 
+                        onClick={retakePhoto}
+                        variant="outline"
+                        className="flex-1 bg-white/10 hover:bg-white/20 text-white border-white/30"
+                        size="lg"
+                      >
+                        Retake
+                      </Button>
+                      <Button 
+                        onClick={startRegionSelection}
+                        disabled={isSelectingRegion}
+                        variant="secondary"
+                        className="flex-1"
+                        size="lg"
+                      >
+                        {isSelectingRegion ? 'Selecting...' : 'Select Region'}
+                      </Button>
+                      <Button 
+                        onClick={() => extractTextFromImage(capturedImage!)}
+                        className="flex-1"
+                        size="lg"
+                      >
+                        Full Scan
+                      </Button>
+                    </div>
                   </div>
                 )}
               </>
@@ -866,6 +1059,62 @@ export const ProductImageSearch = () => {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* History Dialog */}
+      <Dialog open={showHistoryDialog} onOpenChange={setShowHistoryDialog}>
+        <DialogContent className="max-w-md max-h-[80vh] overflow-y-auto">
+          <DialogTitle>Search History</DialogTitle>
+          <DialogDescription>Your recent product searches</DialogDescription>
+          
+          {searchHistory.length === 0 ? (
+            <p className="text-muted-foreground text-center py-8">No search history yet</p>
+          ) : (
+            <div className="space-y-3">
+              {searchHistory.map((item) => (
+                <div key={item.id} className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-accent transition-colors">
+                  <div className="flex-1">
+                    <p className="font-medium">ID: {item.productId}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {new Date(item.timestamp).toLocaleString()}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setProductId(item.productId);
+                        setShowHistoryDialog(false);
+                        handleSearch();
+                      }}
+                    >
+                      <Search className="h-4 w-4" />
+                    </Button>
+                    {item.jiomartUrl && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => window.open(item.jiomartUrl, '_blank')}
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Fixed History Button */}
+      <Button
+        onClick={() => setShowHistoryDialog(true)}
+        className="fixed bottom-6 right-6 h-14 w-14 rounded-full shadow-lg z-50"
+        size="icon"
+      >
+        <History className="h-6 w-6" />
+      </Button>
     </div>
   );
 };
