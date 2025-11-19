@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
 import { Search, X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Scan, ExternalLink, History } from 'lucide-react';
@@ -7,30 +7,7 @@ import { toast } from 'sonner';
 import { extractAllProductImages } from '@/lib/imageExtractor';
 import { getRandomApiKey, GOOGLE_SEARCH_ENGINE_ID } from '@/lib/config';
 import { Skeleton } from './ui/skeleton';
-
-// OCR.space API configuration
-const OCR_API_KEY = 'K86120042088957';
-const OCR_API_URL = 'https://api.ocr.space/parse/image';
-
-interface OCRWord {
-  WordText: string;
-  Left: number;
-  Top: number;
-  Height: number;
-  Width: number;
-}
-
-interface OCRLine {
-  Words: OCRWord[];
-  MaxHeight: number;
-  MinTop: number;
-}
-
-interface TextOverlay {
-  Lines: OCRLine[];
-  HasOverlay: boolean;
-  Message: string;
-}
+import { createWorker, PSM, Worker } from 'tesseract.js';
 
 interface ImageResult {
   imageUrl: string;
@@ -64,14 +41,17 @@ export const ProductImageSearch = () => {
   const [isProcessingOCR, setIsProcessingOCR] = useState(false);
   const [extractedText, setExtractedText] = useState<string>('');
   const [detectedIDs, setDetectedIDs] = useState<string[]>([]);
+  const [selectableTexts, setSelectableTexts] = useState<Array<{ text: string; isNumber: boolean }>>([]);
   const [jiomartUrl, setJiomartUrl] = useState<string>('');
   const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>([]);
   const [showHistoryDialog, setShowHistoryDialog] = useState(false);
-  const [textOverlays, setTextOverlays] = useState<OCRWord[]>([]);
-  const [imageScale, setImageScale] = useState({ width: 1, height: 1 });
+  const [isSelectingRegion, setIsSelectingRegion] = useState(false);
+  const [selectionStart, setSelectionStart] = useState<{ x: number; y: number } | null>(null);
+  const [selectionEnd, setSelectionEnd] = useState<{ x: number; y: number } | null>(null);
   const capturedImageRef = useRef<HTMLImageElement | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const ocrWorkerRef = useRef<Worker | null>(null);
 
   // Load search history from localStorage
   useEffect(() => {
@@ -114,62 +94,83 @@ export const ProductImageSearch = () => {
       const apiKey = getRandomApiKey();
       const query = `site:jiomart.com ${productId}`;
       
-      // Parallel requests for faster results
+      // Parallel search for both images and web results
       const [imageResponse, webResponse] = await Promise.all([
-        fetch(
-          `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&searchType=image&num=10`
-        ),
-        fetch(
-          `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&num=1`
-        )
+        fetch(`https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&searchType=image&num=5&fields=items(link)`),
+        fetch(`https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&num=1&fields=items(link)`)
       ]);
 
-      // Handle image search results
-      if (imageResponse.ok) {
-        const imageData = await imageResponse.json();
-        if (imageData.items && imageData.items.length > 0) {
-          const imageUrls = await extractAllProductImages(imageData.items);
-          setExtractedImages(imageUrls);
-          if (imageUrls.length === 0) {
-            toast.info('No images found for this product ID');
-          }
-        } else {
-          toast.info('No images found for this product ID');
-        }
-      } else {
-        throw new Error('Image search failed');
+      if (!imageResponse.ok) {
+        const errorData = await imageResponse.json();
+        console.error('Google API error:', errorData);
+        throw new Error(errorData.error?.message || 'Failed to fetch images');
       }
 
-      // Handle web search for JioMart URL
-      if (webResponse.ok) {
-        const webData = await webResponse.json();
-        if (webData.items && webData.items.length > 0) {
-          const jiomartLink = webData.items[0].link;
-          setJiomartUrl(jiomartLink);
-          saveToHistory(productId, jiomartLink);
+      const [imageData, webData] = await Promise.all([
+        imageResponse.json(),
+        webResponse.json()
+      ]);
+      
+      // Extract JioMart product page URL
+      let foundUrl = '';
+      if (webData.items && webData.items.length > 0) {
+        const productUrl = webData.items[0].link;
+        if (productUrl.includes('jiomart.com')) {
+          setJiomartUrl(productUrl);
+          foundUrl = productUrl;
         }
-      } else {
-        saveToHistory(productId);
       }
+      
+      // Save to history
+      saveToHistory(productId, foundUrl);
+      
+      if (!imageData.items || imageData.items.length === 0) {
+        toast.error('No images found for this product ID');
+        return;
+      }
+
+      // Get all initial links
+      const initialLinks: string[] = imageData.items.map((item: any) => item.link);
+      const initialUnique = Array.from(new Set(initialLinks));
+      
+      // Extract all JioMart images upfront
+      const jiomartLinks = initialUnique.filter((url) =>
+        url.includes('jiomart.com/images/product')
+      );
+
+      toast.info('Extracting all product images...');
+
+      // Wait for all extractions to complete
+      const extractionResults = await Promise.allSettled(
+        jiomartLinks.map((url) => extractAllProductImages(url))
+      );
+      
+      const allExtractedImages = extractionResults.flatMap((r) => 
+        (r.status === 'fulfilled' ? r.value : [])
+      );
+
+      // Only use high-quality extracted images, remove duplicates
+      const highQualityImages = Array.from(new Set(allExtractedImages.filter(url => 
+        url.includes('/original/')
+      )));
+      
+      setExtractedImages(highQualityImages);
+      toast.success(`Found ${highQualityImages.length} images`);
     } catch (error: any) {
       console.error('Search error:', error);
-      if (error?.message?.includes('quota')) {
-        toast.error('Daily API quota exceeded. Please try again tomorrow or add more API keys.');
-      } else {
-        toast.error('Failed to fetch images. Please try again.');
-      }
+      toast.error(error.message || 'Failed to search. Please try again.');
     } finally {
       setLoading(false);
     }
-  }, [productId, saveToHistory]);
+  }, [productId]);
 
-  const openImageModal = (index: number) => {
+  const openImage = (index: number) => {
     setSelectedImageIndex(index);
     setZoom(1);
     setPosition({ x: 0, y: 0 });
   };
 
-  const closeModal = () => {
+  const closeImage = () => {
     setSelectedImageIndex(null);
     setZoom(1);
     setPosition({ x: 0, y: 0 });
@@ -177,29 +178,25 @@ export const ProductImageSearch = () => {
 
   const goToPrevious = () => {
     if (selectedImageIndex !== null && selectedImageIndex > 0) {
-      setIsTransitioning(true);
+      setSelectedImageIndex(selectedImageIndex - 1);
       setZoom(1);
       setPosition({ x: 0, y: 0 });
-      setSelectedImageIndex(selectedImageIndex - 1);
-      setTimeout(() => setIsTransitioning(false), 300);
     }
   };
 
   const goToNext = () => {
     if (selectedImageIndex !== null && selectedImageIndex < extractedImages.length - 1) {
-      setIsTransitioning(true);
+      setSelectedImageIndex(selectedImageIndex + 1);
       setZoom(1);
       setPosition({ x: 0, y: 0 });
-      setSelectedImageIndex(selectedImageIndex + 1);
-      setTimeout(() => setIsTransitioning(false), 300);
     }
   };
 
-  const zoomIn = () => {
+  const handleZoomIn = () => {
     setZoom(prev => Math.min(prev + 0.25, 5));
   };
 
-  const zoomOut = () => {
+  const handleZoomOut = () => {
     setZoom(prev => Math.max(prev - 0.25, 0.5));
   };
 
@@ -218,8 +215,10 @@ export const ProductImageSearch = () => {
       e.preventDefault();
       setIsTransitioning(true);
       if (zoom === 1) {
+        // Zoom in to 2x
         setZoom(2);
       } else {
+        // Zoom out to 1x
         setZoom(1);
         setPosition({ x: 0, y: 0 });
       }
@@ -241,12 +240,14 @@ export const ProductImageSearch = () => {
       };
     } else if (e.touches.length === 1) {
       handleDoubleTap(e);
+      // Track touch start for both navigation and panning
       swipeStartRef.current = {
         x: e.touches[0].clientX,
         y: e.touches[0].clientY,
         time: Date.now()
       };
       if (zoom > 1) {
+        // Start panning for zoomed images
         setDragStart({ x: e.touches[0].clientX - position.x, y: e.touches[0].clientY - position.y });
       }
     }
@@ -260,6 +261,7 @@ export const ProductImageSearch = () => {
       const newZoom = Math.min(Math.max(touchStartRef.current.zoom * scale, 0.5), 5);
       setZoom(newZoom);
     } else if (e.touches.length === 1 && zoom > 1 && swipeStartRef.current) {
+      // Pan the zoomed image
       e.preventDefault();
       const newX = e.touches[0].clientX - dragStart.x;
       const newY = e.touches[0].clientY - dragStart.y;
@@ -274,10 +276,13 @@ export const ProductImageSearch = () => {
       const deltaY = touch.clientY - swipeStartRef.current.y;
       const deltaTime = Date.now() - swipeStartRef.current.time;
       
+      // Check if it's a horizontal swipe (more horizontal than vertical)
       if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 50 && deltaTime < 300) {
         if (deltaX > 0 && selectedImageIndex !== null && selectedImageIndex > 0) {
+          // Swipe right - go to previous
           goToPrevious();
         } else if (deltaX < 0 && selectedImageIndex !== null && selectedImageIndex < extractedImages.length - 1) {
+          // Swipe left - go to next
           goToNext();
         }
       }
@@ -308,28 +313,37 @@ export const ProductImageSearch = () => {
     setIsDragging(false);
   };
 
-  useEffect(() => {
-    if (selectedImageIndex !== null && zoom > 1) {
-      document.addEventListener('mouseup', handleMouseUp);
-      return () => {
-        document.removeEventListener('mouseup', handleMouseUp);
-      };
-    }
-  }, [selectedImageIndex, zoom]);
+  const handleMouseLeave = () => {
+    setIsDragging(false);
+  };
 
-  // Camera functions
+  useEffect(() => {
+    if (zoom === 1) {
+      setPosition({ x: 0, y: 0 });
+    }
+  }, [zoom]);
+
   const startCamera = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { 
+          facingMode: 'environment',
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
+        } 
       });
       setCameraStream(stream);
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
+      setShowCameraDialog(true);
+      
+      // Wait for dialog to mount then attach stream
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+      }, 100);
     } catch (error) {
+      toast.error('Camera access denied or not available');
       console.error('Camera error:', error);
-      toast.error('Failed to access camera');
     }
   };
 
@@ -338,24 +352,34 @@ export const ProductImageSearch = () => {
       cameraStream.getTracks().forEach(track => track.stop());
       setCameraStream(null);
     }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setShowCameraDialog(false);
+    setCapturedImage(null);
   };
 
-  const capturePhoto = async () => {
+  const captureImage = async () => {
     if (!videoRef.current || !canvasRef.current) return;
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
     
-    if (!ctx) return;
-
+    // Set canvas size to match video
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
-    ctx.drawImage(video, 0, 0);
-
-    const imageData = canvas.toDataURL('image/png');
+    
+    // Draw video frame to canvas
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    
+    // Convert to image
+    const imageData = canvas.toDataURL('image/jpeg', 0.9);
     setCapturedImage(imageData);
     
+    // Stop camera stream
     if (cameraStream) {
       cameraStream.getTracks().forEach(track => track.stop());
       setCameraStream(null);
@@ -369,391 +393,663 @@ export const ProductImageSearch = () => {
     setCapturedImage(null);
     setExtractedText('');
     setDetectedIDs([]);
-    setTextOverlays([]);
-    capturedImageRef.current = null;
+    setSelectableTexts([]);
+    setIsSelectingRegion(false);
+    setSelectionStart(null);
+    setSelectionEnd(null);
     startCamera();
+  };
+
+  const startRegionSelection = () => {
+    setIsSelectingRegion(true);
+    setSelectionStart(null);
+    setSelectionEnd(null);
+    toast.info('Draw a box around the ID text');
+  };
+
+  const handleSelectionStart = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
+    if (!isSelectingRegion) return;
+    
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = 'touches' in e ? e.touches[0].clientX - rect.left : e.clientX - rect.left;
+    const y = 'touches' in e ? e.touches[0].clientY - rect.top : e.clientY - rect.top;
+    
+    setSelectionStart({ x, y });
+    setSelectionEnd({ x, y });
+  };
+
+  const handleSelectionMove = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
+    if (!isSelectingRegion || !selectionStart) return;
+    
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = 'touches' in e ? e.touches[0].clientX - rect.left : e.clientX - rect.left;
+    const y = 'touches' in e ? e.touches[0].clientY - rect.top : e.clientY - rect.top;
+    
+    setSelectionEnd({ x, y });
+  };
+
+  const handleSelectionEnd = async () => {
+    if (!isSelectingRegion || !selectionStart || !selectionEnd || !capturedImage) return;
+    
+    setIsSelectingRegion(false);
+    setIsProcessingOCR(true);
+
+    try {
+      const img = capturedImageRef.current;
+      if (!img) return;
+
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      // Calculate selection bounds
+      const x = Math.min(selectionStart.x, selectionEnd.x);
+      const y = Math.min(selectionStart.y, selectionEnd.y);
+      const width = Math.abs(selectionEnd.x - selectionStart.x);
+      const height = Math.abs(selectionEnd.y - selectionStart.y);
+
+      // Scale to actual image dimensions
+      const scaleX = img.naturalWidth / img.width;
+      const scaleY = img.naturalHeight / img.height;
+
+      canvas.width = width * scaleX;
+      canvas.height = height * scaleY;
+
+      ctx.drawImage(
+        img,
+        x * scaleX,
+        y * scaleY,
+        width * scaleX,
+        height * scaleY,
+        0,
+        0,
+        canvas.width,
+        canvas.height
+      );
+
+      // Preprocess cropped image
+      const croppedDataUrl = canvas.toDataURL('image/png');
+      const preprocessed = await preprocessImage(croppedDataUrl);
+
+      // OCR on selected region only
+      if (!ocrWorkerRef.current) {
+        ocrWorkerRef.current = await createWorker('eng', 1, {
+          cachePath: '.',
+          cacheMethod: 'write'
+        });
+      }
+
+      await ocrWorkerRef.current.setParameters({
+        tessedit_char_whitelist: '0123456789IDid: ',
+        tessedit_pageseg_mode: PSM.SPARSE_TEXT,
+      });
+
+      const { data } = await ocrWorkerRef.current.recognize(preprocessed);
+      const text = data.text.trim();
+      setExtractedText(text);
+
+      // Extract ID
+      const idMatch = text.match(/ID\s*:?\s*(\d+)/i);
+      const extractedId = idMatch ? idMatch[1] : text.match(/\d{8,}/)?.[0] || '';
+
+      if (extractedId) {
+        setProductId(extractedId);
+        setShowCameraDialog(false);
+        stopCamera();
+        setTimeout(() => handleSearch(), 100);
+      } else {
+        toast.error('No ID found in selected region');
+      }
+    } catch (error) {
+      console.error('Region OCR error:', error);
+      toast.error('Failed to extract text from region');
+    } finally {
+      setIsProcessingOCR(false);
+      setSelectionStart(null);
+      setSelectionEnd(null);
+    }
+  };
+
+  // Initialize OCR worker once and reuse
+  useEffect(() => {
+    const initWorker = async () => {
+      try {
+        const worker = await createWorker('eng', 1, {
+          logger: () => {}, // Disable logging for speed
+        });
+        ocrWorkerRef.current = worker;
+      } catch (error) {
+        console.error('Failed to initialize OCR worker:', error);
+      }
+    };
+    
+    initWorker();
+    
+    return () => {
+      if (ocrWorkerRef.current) {
+        ocrWorkerRef.current.terminate();
+      }
+    };
+  }, []);
+
+  // Advanced pre-processing for blur/shaky images
+  const preprocessImage = (imageData: string): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d')!;
+        
+        // Scale up significantly for better recognition of blur/shaky images
+        const scale = 3;
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+        
+        // Apply aggressive sharpening and contrast for blur/shaky images
+        ctx.filter = 'contrast(2) brightness(1.2) saturate(0)';
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        
+        // Get image data for advanced processing
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+        
+        // Convert to grayscale with enhanced contrast
+        for (let i = 0; i < data.length; i += 4) {
+          const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+          // Apply threshold for better text detection
+          const threshold = gray > 128 ? 255 : 0;
+          data[i] = data[i + 1] = data[i + 2] = threshold;
+        }
+        
+        ctx.putImageData(imageData, 0, 0);
+        
+        // Apply unsharp mask for blur reduction
+        const tempCanvas = document.createElement('canvas');
+        const tempCtx = tempCanvas.getContext('2d')!;
+        tempCanvas.width = canvas.width;
+        tempCanvas.height = canvas.height;
+        tempCtx.filter = 'blur(1px)';
+        tempCtx.drawImage(canvas, 0, 0);
+        
+        // Combine original and blurred for sharpening
+        ctx.globalAlpha = 1.5;
+        ctx.drawImage(canvas, 0, 0);
+        ctx.globalAlpha = -0.5;
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.drawImage(tempCanvas, 0, 0);
+        
+        resolve(canvas.toDataURL('image/jpeg', 0.98));
+      };
+      img.src = imageData;
+    });
   };
 
   const extractTextFromImage = async (imageData: string) => {
     setIsProcessingOCR(true);
-    setTextOverlays([]);
     
     try {
-      // Convert base64 to blob
-      const base64Data = imageData.split(',')[1];
+      // Pre-process image for better OCR
+      const processedImage = await preprocessImage(imageData);
       
-      // Call OCR.space API with overlay
-      const formData = new FormData();
-      formData.append('base64Image', `data:image/png;base64,${base64Data}`);
-      formData.append('apikey', OCR_API_KEY);
-      formData.append('OCREngine', '2'); // Engine 2 for better accuracy
-      formData.append('isOverlayRequired', 'true'); // Get word positions
-      formData.append('detectOrientation', 'true');
-      
-      const response = await fetch(OCR_API_URL, {
-        method: 'POST',
-        body: formData,
-      });
-
-      const result = await response.json();
-      
-      if (result.OCRExitCode !== 1 || !result.ParsedResults?.[0]) {
-        throw new Error(result.ErrorMessage || 'OCR failed');
-      }
-
-      const parsedResult = result.ParsedResults[0];
-      const fullText = parsedResult.ParsedText || '';
-      setExtractedText(fullText);
-
-      // Process overlay data
-      const overlay: TextOverlay = parsedResult.TextOverlay;
-      if (overlay?.HasOverlay && overlay.Lines) {
-        const allWords: OCRWord[] = [];
-        
-        overlay.Lines.forEach(line => {
-          line.Words.forEach(word => {
-            allWords.push(word);
-          });
+      // Use cached worker or create new one
+      let worker = ocrWorkerRef.current;
+      if (!worker) {
+        worker = await createWorker('eng', 1, {
+          logger: () => {},
         });
-        
-        setTextOverlays(allWords);
-      }
-
-      // Extract IDs - strictly look for "ID :" pattern
-      const idMatches: string[] = [];
-      const idPattern = /ID\s*:?\s*(\d+)/gi;
-      let match;
-      while ((match = idPattern.exec(fullText)) !== null) {
-        idMatches.push(match[1]);
       }
       
-      // Fallback to 8-digit numbers if no "ID :" found
-      if (idMatches.length === 0) {
-        const numberPattern = /\b\d{8}\b/g;
-        let numMatch;
-        while ((numMatch = numberPattern.exec(fullText)) !== null) {
-          idMatches.push(numMatch[0]);
+      // Run multiple OCR passes in parallel for better accuracy
+      const [sparseResult, autoResult] = await Promise.all([
+        (async () => {
+          await worker!.setParameters({
+            tessedit_char_whitelist: '0123456789IDDesc:id ',
+            tessedit_pageseg_mode: PSM.SPARSE_TEXT,
+          });
+          return await worker!.recognize(processedImage);
+        })(),
+        (async () => {
+          await worker!.setParameters({
+            tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ',
+            tessedit_pageseg_mode: PSM.AUTO,
+          });
+          return await worker!.recognize(processedImage);
+        })()
+      ]);
+      
+      // Combine results
+      const combinedText = `${sparseResult.data.text}\n${autoResult.data.text}`;
+      console.log('Extracted text:', combinedText);
+      setExtractedText(combinedText);
+      
+      // Parse text into selectable segments
+      const words = combinedText.split(/\s+/).filter(w => w.trim().length > 0);
+      const selectable = words.map(word => {
+        const cleanWord = word.trim();
+        const isLongNumber = /^\d{6,}$/.test(cleanWord);
+        const hasDigits = /\d/.test(cleanWord);
+        return {
+          text: cleanWord,
+          isNumber: isLongNumber || hasDigits
+        };
+      });
+      
+      setSelectableTexts(selectable);
+      
+      // Find primary IDs - ONLY extract text AFTER "ID : "
+      const lines = combinedText.split('\n');
+      const foundIDs: string[] = [];
+      
+      for (const line of lines) {
+        // Look for "ID:" or "ID :" patterns and extract ONLY the digits after it
+        const idMatch = line.match(/ID\s*[:：]\s*(\d+)/i);
+        if (idMatch && idMatch[1]) {
+          const cleanID = idMatch[1].trim();
+          if (cleanID.length >= 6 && !foundIDs.includes(cleanID)) {
+            foundIDs.push(cleanID);
+          }
         }
       }
       
-      setDetectedIDs([...new Set(idMatches)]);
+      // Only add standalone numbers if no ID pattern was found
+      if (foundIDs.length === 0) {
+        for (const line of lines) {
+          const numberMatch = line.match(/\b(\d{8,})\b/);
+          if (numberMatch && !foundIDs.includes(numberMatch[1])) {
+            foundIDs.push(numberMatch[1]);
+          }
+        }
+      }
       
-      // Auto-search if ID found
-      if (idMatches.length > 0) {
-        const firstID = idMatches[0];
-        setProductId(firstID);
-        toast.success(`ID detected: ${firstID}`);
-        
-        // Close camera dialog and search
-        setShowCameraDialog(false);
-        stopCamera();
-        
-        // Small delay to ensure UI updates
-        setTimeout(async () => {
-          await handleSearch();
-        }, 100);
+      const uniqueIDs = Array.from(new Set(foundIDs));
+      setDetectedIDs(uniqueIDs);
+      
+      if (uniqueIDs.length === 0) {
+        toast.info('No IDs detected. Tap any text to search.');
       } else {
-        toast.info('Click on text overlay to select ID');
+        toast.success(`Detected ${uniqueIDs.length} ID(s)`);
       }
     } catch (error) {
-      console.error('OCR Error:', error);
+      console.error('OCR error:', error);
       toast.error('Failed to extract text. Please try again.');
     } finally {
       setIsProcessingOCR(false);
     }
   };
 
-  useEffect(() => {
-    if (showCameraDialog && !capturedImage) {
-      startCamera();
-    }
-    return () => {
-      stopCamera();
-    };
-  }, [showCameraDialog, capturedImage]);
-
-  const handleHistoryClick = (item: SearchHistoryItem) => {
-    setProductId(item.productId);
-    setShowHistoryDialog(false);
-    handleSearch();
+  const useDetectedID = (id: string) => {
+    setProductId(id);
+    stopCamera();
+    toast.success(`Searching for: ${id}`);
+    // Trigger search automatically
+    setTimeout(() => {
+      handleSearch();
+    }, 100);
   };
 
+  const handleTextSelect = (text: string) => {
+    // Clean the text - extract numbers if present
+    const numbers = text.match(/\d+/g);
+    const searchText = numbers ? numbers.join('') : text;
+    
+    setProductId(searchText);
+    stopCamera();
+    toast.success(`Searching for: ${searchText}`);
+    // Auto-search
+    setTimeout(() => {
+      handleSearch();
+    }, 100);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, [cameraStream]);
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-background to-muted/20 p-4 sm:p-6 md:p-8">
-      <div className="max-w-6xl mx-auto">
-        <div className="text-center mb-8 space-y-2">
-          <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary via-primary/80 to-primary/60">
-            Product Image Finder
-          </h1>
-          <p className="text-muted-foreground text-lg">
-            Search for product images using JioMart product IDs
-          </p>
-        </div>
-
-        <div className="bg-card rounded-2xl shadow-xl border border-border p-6 mb-8">
-          <div className="flex gap-3 mb-4">
-            <Input
-              type="text"
-              placeholder="Enter Product ID (e.g., 590688737)"
-              value={productId}
-              onChange={(e) => setProductId(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-              className="flex-1 h-12 text-lg"
-            />
-            <Button 
-              onClick={handleSearch} 
-              disabled={loading}
-              className="h-12 px-6 gap-2"
-              size="lg"
-            >
-              {loading ? 'Searching...' : <><Search className="h-5 w-5" /> Search</>}
-            </Button>
-            <Button
-              onClick={() => setShowCameraDialog(true)}
-              variant="secondary"
-              className="h-12 px-6"
-              size="lg"
-            >
-              <Scan className="h-5 w-5" />
-            </Button>
-          </div>
-
-          {jiomartUrl && (
-            <div className="mt-4">
-              <Button
-                onClick={() => window.open(jiomartUrl, '_blank')}
-                variant="outline"
-                className="w-full gap-2"
-              >
-                <ExternalLink className="h-4 w-4" />
-                Open Product Page
-              </Button>
-            </div>
-          )}
-
-          {loading && (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 mt-6">
-              {[...Array(8)].map((_, i) => (
-                <Skeleton key={i} className="aspect-square rounded-lg" />
-              ))}
-            </div>
-          )}
-
-          {!loading && extractedImages.length > 0 && (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 mt-6">
-              {extractedImages.map((imageUrl, index) => (
-                <div
-                  key={index}
-                  className="group relative aspect-square rounded-lg overflow-hidden cursor-pointer border border-border hover:border-primary transition-all hover:shadow-lg"
-                  onClick={() => openImageModal(index)}
-                >
-                  <img
-                    src={imageUrl}
-                    alt={`Product ${index + 1}`}
-                    className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
-                    loading="lazy"
-                  />
-                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors" />
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+    <div className="space-y-4">
+      {/* Search Section */}
+      <div className="flex gap-2">
+        <Input
+          type="text"
+          placeholder="Enter product id"
+          value={productId}
+          onChange={(e) => setProductId(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+          className="flex-1"
+        />
+        <Button 
+          variant="outline" 
+          size="icon" 
+          onClick={startCamera} 
+          title="Scan text from camera"
+        >
+          <Scan className="w-4 h-4" />
+        </Button>
+        <Button onClick={handleSearch} disabled={loading}>
+          <Search className="w-4 h-4 mr-2" />
+          {loading ? 'Finding...' : 'Find'}
+        </Button>
       </div>
 
-      {/* Image Modal */}
-      <Dialog open={selectedImageIndex !== null} onOpenChange={() => closeModal()}>
-        <DialogContent className="max-w-7xl w-full h-[90vh] p-0 gap-0">
-          <DialogTitle className="sr-only">Product Image Viewer</DialogTitle>
-          <DialogDescription className="sr-only">
-            View and zoom product image
-          </DialogDescription>
-          <div className="relative w-full h-full flex items-center justify-center bg-black/95">
-            <button
-              onClick={closeModal}
-              className="absolute top-4 right-4 z-50 p-2 bg-black/50 hover:bg-black/70 rounded-full transition-colors"
-            >
-              <X className="h-6 w-6 text-white" />
-            </button>
 
-            {selectedImageIndex !== null && selectedImageIndex > 0 && (
-              <button
-                onClick={goToPrevious}
-                className="absolute left-4 z-50 p-3 bg-black/50 hover:bg-black/70 rounded-full transition-colors"
+      {/* Extracted Images Grid */}
+      {extractedImages.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium">Product Images ({extractedImages.length})</h3>
+            {jiomartUrl && (
+              <Button
+                variant="default"
+                size="sm"
+                onClick={() => window.open(jiomartUrl, '_blank')}
+                className="gap-2"
               >
-                <ChevronLeft className="h-8 w-8 text-white" />
-              </button>
-            )}
-
-            {selectedImageIndex !== null && selectedImageIndex < extractedImages.length - 1 && (
-              <button
-                onClick={goToNext}
-                className="absolute right-4 z-50 p-3 bg-black/50 hover:bg-black/70 rounded-full transition-colors"
-              >
-                <ChevronRight className="h-8 w-8 text-white" />
-              </button>
-            )}
-
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 flex gap-2 bg-black/50 rounded-full p-2">
-              <button
-                onClick={zoomOut}
-                disabled={zoom <= 0.5}
-                className="p-2 hover:bg-white/10 rounded-full transition-colors disabled:opacity-50"
-              >
-                <ZoomOut className="h-5 w-5 text-white" />
-              </button>
-              <div className="px-4 py-2 text-white font-medium">
-                {Math.round(zoom * 100)}%
-              </div>
-              <button
-                onClick={zoomIn}
-                disabled={zoom >= 5}
-                className="p-2 hover:bg-white/10 rounded-full transition-colors disabled:opacity-50"
-              >
-                <ZoomIn className="h-5 w-5 text-white" />
-              </button>
-            </div>
-
-            <div
-              ref={imageRef}
-              className="w-full h-full overflow-hidden cursor-move"
-              onMouseDown={handleMouseDown}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUp}
-              onTouchStart={handleTouchStart}
-              onTouchMove={handleTouchMove}
-              onTouchEnd={handleTouchEnd}
-            >
-              {selectedImageIndex !== null && (
-                <img
-                  src={extractedImages[selectedImageIndex]}
-                  alt="Product"
-                  className={`w-full h-full object-contain select-none ${isTransitioning ? 'transition-opacity duration-300' : ''}`}
-                  style={{
-                    transform: `scale(${zoom}) translate(${position.x / zoom}px, ${position.y / zoom}px)`,
-                    transition: zoom > 1 ? 'none' : 'transform 0.3s ease-out',
-                  }}
-                  draggable="false"
-                />
-              )}
-            </div>
-
-            {selectedImageIndex !== null && (
-              <div className="absolute top-4 left-4 bg-black/50 text-white px-4 py-2 rounded-full">
-                {selectedImageIndex + 1} / {extractedImages.length}
-              </div>
+                <ExternalLink className="w-4 h-4" />
+                Open Product Page
+              </Button>
             )}
           </div>
+          <div className="columns-2 sm:columns-3 md:columns-4 gap-3 [column-fill:_balance]">
+            {extractedImages.map((url, index) => (
+              <div
+                key={url}
+                className="mb-3 break-inside-avoid rounded-lg border border-border hover:border-primary transition-all overflow-hidden cursor-pointer group bg-muted"
+                onClick={() => openImage(index)}
+              >
+                <img
+                  src={url}
+                  alt={`Product image ${index + 1}`}
+                  className="w-full h-auto object-cover transition-all duration-300 group-hover:opacity-90"
+                  loading="lazy"
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Image Viewer Dialog */}
+      <Dialog open={selectedImageIndex !== null} onOpenChange={(open) => !open && closeImage()}>
+        <DialogContent className="max-w-full max-h-full w-screen h-screen p-0 bg-background/95 backdrop-blur border-0">
+          <div className="sr-only">
+            <DialogTitle>Product Image Viewer</DialogTitle>
+            <DialogDescription>View and navigate product images</DialogDescription>
+          </div>
+          {selectedImageIndex !== null && (
+            <div className="relative w-full h-screen flex items-center justify-center">
+              {/* Close Button */}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="absolute top-4 right-4 z-10 bg-background/80 hover:bg-background"
+                onClick={closeImage}
+              >
+                <X className="w-5 h-5" />
+              </Button>
+
+              {/* Zoom Controls */}
+              <div className="absolute top-4 left-4 z-10 flex gap-2">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="bg-background/80 hover:bg-background"
+                  onClick={handleZoomOut}
+                  disabled={zoom <= 0.5}
+                >
+                  <ZoomOut className="w-5 h-5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="bg-background/80 hover:bg-background"
+                  onClick={handleZoomIn}
+                  disabled={zoom >= 5}
+                >
+                  <ZoomIn className="w-5 h-5" />
+                </Button>
+              </div>
+
+              {/* Previous Button */}
+              {selectedImageIndex > 0 && (
+                <div
+                  className="absolute left-4 top-1/2 -translate-y-1/2 z-10 cursor-pointer text-foreground/80 hover:text-foreground transition-colors"
+                  onClick={goToPrevious}
+                >
+                  <ChevronLeft className="w-8 h-8" />
+                </div>
+              )}
+
+              {/* Image */}
+              <div 
+                className="w-full h-full flex items-center justify-center"
+                onClick={closeImage}
+              >
+                <div 
+                  ref={imageRef}
+                  className="relative w-full h-full flex items-center justify-center touch-none"
+                  onClick={(e) => e.stopPropagation()}
+                  onTouchStart={handleTouchStart}
+                  onTouchMove={handleTouchMove}
+                  onTouchEnd={handleTouchEnd}
+                  onMouseDown={handleMouseDown}
+                  onMouseMove={handleMouseMove}
+                  onMouseUp={handleMouseUp}
+                  onMouseLeave={handleMouseLeave}
+                >
+                  <img
+                    src={extractedImages[selectedImageIndex]}
+                    alt={`Product ${selectedImageIndex + 1}`}
+                    style={{ 
+                      transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})`, 
+                      transition: (isDragging || touchStartRef.current) && !isTransitioning ? 'none' : 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                      cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default',
+                      transformOrigin: 'center center',
+                      userSelect: 'none',
+                      WebkitUserSelect: 'none',
+                      touchAction: 'none'
+                    }}
+                    className="max-w-[80vw] max-h-[80vh] object-contain"
+                    draggable={false}
+                  />
+                </div>
+              </div>
+
+              {/* Next Button */}
+              {selectedImageIndex < extractedImages.length - 1 && (
+                <div
+                  className="absolute right-4 top-1/2 -translate-y-1/2 z-10 cursor-pointer text-foreground/80 hover:text-foreground transition-colors"
+                  onClick={goToNext}
+                >
+                  <ChevronRight className="w-8 h-8" />
+                </div>
+              )}
+
+              {/* Image Counter */}
+              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 bg-background/80 px-3 py-1 rounded-full text-sm">
+                {selectedImageIndex + 1} / {extractedImages.length}
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
       {/* Camera Dialog */}
-      <Dialog open={showCameraDialog} onOpenChange={(open) => {
-        setShowCameraDialog(open);
-        if (!open) {
-          stopCamera();
-          setCapturedImage(null);
-          setExtractedText('');
-          setDetectedIDs([]);
-          setTextOverlays([]);
-        }
-      }}>
-        <DialogContent className="max-w-4xl">
-          <DialogTitle>Scan Product ID</DialogTitle>
-          <DialogDescription>
-            Capture an image of the product ID to automatically extract it
-          </DialogDescription>
-          <div className="space-y-4">
+      <Dialog open={showCameraDialog} onOpenChange={(open) => !open && stopCamera()}>
+        <DialogContent className="max-w-full max-h-full w-screen h-screen p-0 bg-black">
+          <div className="sr-only">
+            <DialogTitle>Camera Scanner</DialogTitle>
+            <DialogDescription>Capture product image for text extraction</DialogDescription>
+          </div>
+          
+          <div className="relative w-full h-full">
+            {/* Close Button */}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="absolute top-4 right-4 z-20 bg-black/50 hover:bg-black/70 text-white"
+              onClick={stopCamera}
+            >
+              <X className="w-5 h-5" />
+            </Button>
+
             {!capturedImage ? (
               <>
-                <div className="relative aspect-video bg-black rounded-lg overflow-hidden">
-                  <video
-                    ref={videoRef}
-                    autoPlay
-                    playsInline
-                    className="w-full h-full object-cover"
-                  />
+                {/* Live Camera View */}
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="w-full h-full object-cover"
+                />
+                <canvas ref={canvasRef} className="hidden" />
+                
+                {/* Scanning Guide */}
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <div className="relative w-[85%] max-w-md aspect-[3/2] border-2 border-primary/60 rounded-lg">
+                    <div className="absolute -top-1 -left-1 w-6 h-6 border-t-4 border-l-4 border-primary rounded-tl" />
+                    <div className="absolute -top-1 -right-1 w-6 h-6 border-t-4 border-r-4 border-primary rounded-tr" />
+                    <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-4 border-l-4 border-primary rounded-bl" />
+                    <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-4 border-r-4 border-primary rounded-br" />
+                  </div>
                 </div>
-                <Button onClick={capturePhoto} className="w-full" size="lg">
-                  Capture Photo
-                </Button>
+
+                {/* Instructions */}
+                <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 to-transparent">
+                  <p className="text-white text-center mb-4 text-sm">
+                    Position product text within the frame
+                  </p>
+                  <Button 
+                    onClick={captureImage}
+                    className="w-full"
+                    size="lg"
+                  >
+                    <Scan className="w-5 h-5 mr-2" />
+                    Capture
+                  </Button>
+                </div>
               </>
             ) : (
               <>
-                {capturedImage && (
-                  <div className="space-y-4">
-                    <div 
-                      ref={capturedImageRef}
-                      className="relative max-w-full mx-auto overflow-hidden rounded-lg border"
-                    >
-                      <img 
-                        src={capturedImage} 
-                        alt="Captured" 
-                        className="max-w-full h-auto"
-                        onLoad={(e) => {
-                          const img = e.currentTarget;
-                          capturedImageRef.current = img;
-                          // Calculate scale for overlay positioning
-                          const rect = img.getBoundingClientRect();
-                          setImageScale({
-                            width: rect.width / img.naturalWidth,
-                            height: rect.height / img.naturalHeight
-                          });
-                        }}
-                      />
-                      {/* Text overlays - clickable regions */}
-                      {textOverlays.map((word, idx) => (
-                        <button
-                          key={idx}
-                          className="absolute border border-primary/50 bg-primary/10 hover:bg-primary/30 hover:border-primary transition-all cursor-pointer"
-                          style={{
-                            left: `${word.Left * imageScale.width}px`,
-                            top: `${word.Top * imageScale.height}px`,
-                            width: `${word.Width * imageScale.width}px`,
-                            height: `${word.Height * imageScale.height}px`,
-                          }}
-                          onClick={() => {
-                            const text = word.WordText;
-                            // Extract numbers from clicked text
-                            const numbers = text.match(/\d+/);
-                            if (numbers) {
-                              setProductId(numbers[0]);
-                              toast.success(`Selected ID: ${numbers[0]}`);
-                            } else {
-                              toast.info(`Selected: ${text}`);
-                            }
-                          }}
-                          title={word.WordText}
-                        >
-                          <span className="sr-only">{word.WordText}</span>
-                        </button>
-                      ))}
+                {/* Captured Image Preview */}
+                <div 
+                  className="relative w-full h-full cursor-crosshair"
+                  onMouseDown={handleSelectionStart}
+                  onMouseMove={handleSelectionMove}
+                  onMouseUp={handleSelectionEnd}
+                  onTouchStart={handleSelectionStart}
+                  onTouchMove={handleSelectionMove}
+                  onTouchEnd={handleSelectionEnd}
+                >
+                  <img 
+                    ref={capturedImageRef}
+                    src={capturedImage} 
+                    alt="Captured" 
+                    className="w-full h-full object-contain"
+                  />
+                  
+                  {/* Region Selection Overlay */}
+                  {isSelectingRegion && selectionStart && selectionEnd && (
+                    <div
+                      className="absolute border-2 border-primary bg-primary/20 pointer-events-none"
+                      style={{
+                        left: Math.min(selectionStart.x, selectionEnd.x),
+                        top: Math.min(selectionStart.y, selectionEnd.y),
+                        width: Math.abs(selectionEnd.x - selectionStart.x),
+                        height: Math.abs(selectionEnd.y - selectionStart.y),
+                      }}
+                    />
+                  )}
+                  
+                  {/* Processing Overlay */}
+                  {isProcessingOCR && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                      <div className="bg-background/90 backdrop-blur-sm rounded-lg p-4 flex items-center gap-3">
+                        <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+                        <span className="text-foreground">Extracting text...</span>
+                      </div>
                     </div>
+                  )}
 
-                    {extractedText && (
-                      <div className="p-4 bg-muted rounded-lg">
-                        <h3 className="font-semibold mb-2">Extracted Text:</h3>
-                        <p className="text-sm whitespace-pre-wrap">{extractedText}</p>
+                  {/* Smart Text Selection - Google Lens style */}
+                  {!isProcessingOCR && selectableTexts.length > 0 && (
+                    <div className="absolute inset-0 p-4 overflow-auto pointer-events-none">
+                      <div className="max-w-2xl mx-auto pointer-events-auto">
+                        {/* Primary IDs at top */}
                         {detectedIDs.length > 0 && (
-                          <div className="mt-2 pt-2 border-t">
-                            <p className="text-sm font-semibold">Detected IDs:</p>
-                            <p className="text-sm text-primary">{detectedIDs.join(', ')}</p>
+                          <div className="mb-4 space-y-2">
+                            <div className="text-xs text-white/70 font-medium mb-1 px-2">Product IDs</div>
+                            {detectedIDs.map((id, index) => (
+                              <button
+                                key={`id-${index}`}
+                                onClick={() => useDetectedID(id)}
+                                className="w-full bg-primary/95 hover:bg-primary text-primary-foreground rounded-lg px-4 py-3 text-base font-mono font-bold shadow-lg transition-all hover:scale-[1.02] active:scale-95 flex items-center justify-between"
+                              >
+                                <span>{id}</span>
+                                <Search className="w-4 h-4" />
+                              </button>
+                            ))}
                           </div>
                         )}
+                        
+                        {/* All selectable text */}
+                        <div className="bg-black/60 backdrop-blur-sm rounded-lg p-3">
+                          <div className="text-xs text-white/70 font-medium mb-2 px-1">Tap any text to search</div>
+                          <div className="flex flex-wrap gap-2">
+                            {selectableTexts.map((item, index) => (
+                              <button
+                                key={index}
+                                onClick={() => handleTextSelect(item.text)}
+                                className={`px-3 py-2 rounded-md text-sm font-medium transition-all hover:scale-105 active:scale-95 ${
+                                  item.isNumber
+                                    ? 'bg-primary/80 hover:bg-primary text-primary-foreground font-mono'
+                                    : 'bg-white/20 hover:bg-white/30 text-white'
+                                }`}
+                              >
+                                {item.text}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
                       </div>
-                    )}
-
+                    </div>
+                  )}
+                </div>
+                
+                {/* Actions */}
+                {!isProcessingOCR && selectableTexts.length === 0 && (
+                  <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 to-transparent space-y-3">
+                    <p className="text-white text-center text-sm mb-2">
+                      {isSelectingRegion ? 'Draw a box around the ID text' : 'Choose an option'}
+                    </p>
                     <div className="flex gap-2">
-                      <Button onClick={retakePhoto} variant="outline" className="flex-1" size="lg">
+                      <Button 
+                        onClick={retakePhoto}
+                        variant="outline"
+                        className="flex-1 bg-white/10 hover:bg-white/20 text-white border-white/30"
+                        size="lg"
+                      >
                         Retake
+                      </Button>
+                      <Button 
+                        onClick={startRegionSelection}
+                        disabled={isSelectingRegion}
+                        variant="secondary"
+                        className="flex-1"
+                        size="lg"
+                      >
+                        {isSelectingRegion ? 'Selecting...' : 'Select Region'}
                       </Button>
                       <Button 
                         onClick={() => extractTextFromImage(capturedImage!)}
                         className="flex-1"
                         size="lg"
-                        disabled={isProcessingOCR}
                       >
-                        {isProcessingOCR ? 'Scanning...' : 'Scan for ID'}
+                        Full Scan
                       </Button>
                     </div>
                   </div>
@@ -761,56 +1057,60 @@ export const ProductImageSearch = () => {
               </>
             )}
           </div>
-          <canvas ref={canvasRef} className="hidden" />
         </DialogContent>
       </Dialog>
 
-      {/* Search History Dialog */}
+      {/* History Dialog */}
       <Dialog open={showHistoryDialog} onOpenChange={setShowHistoryDialog}>
-        <DialogContent>
+        <DialogContent className="max-w-md max-h-[80vh] overflow-y-auto">
           <DialogTitle>Search History</DialogTitle>
-          <DialogDescription>
-            Your recent product ID searches
-          </DialogDescription>
-          <div className="space-y-2 max-h-96 overflow-y-auto">
-            {searchHistory.length === 0 ? (
-              <p className="text-center text-muted-foreground py-8">No search history yet</p>
-            ) : (
-              searchHistory.map((item) => (
-                <div
-                  key={item.id}
-                  className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 cursor-pointer transition-colors"
-                  onClick={() => handleHistoryClick(item)}
-                >
+          <DialogDescription>Your recent product searches</DialogDescription>
+          
+          {searchHistory.length === 0 ? (
+            <p className="text-muted-foreground text-center py-8">No search history yet</p>
+          ) : (
+            <div className="space-y-3">
+              {searchHistory.map((item) => (
+                <div key={item.id} className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-accent transition-colors">
                   <div className="flex-1">
-                    <p className="font-medium">{item.productId}</p>
+                    <p className="font-medium">ID: {item.productId}</p>
                     <p className="text-xs text-muted-foreground">
                       {new Date(item.timestamp).toLocaleString()}
                     </p>
                   </div>
-                  {item.jiomartUrl && (
+                  <div className="flex gap-2">
                     <Button
                       size="sm"
-                      variant="ghost"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        window.open(item.jiomartUrl, '_blank');
+                      variant="outline"
+                      onClick={() => {
+                        setProductId(item.productId);
+                        setShowHistoryDialog(false);
+                        handleSearch();
                       }}
                     >
-                      <ExternalLink className="h-4 w-4" />
+                      <Search className="h-4 w-4" />
                     </Button>
-                  )}
+                    {item.jiomartUrl && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => window.open(item.jiomartUrl, '_blank')}
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
                 </div>
-              ))
-            )}
-          </div>
+              ))}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
-      {/* History Button - Fixed Bottom Right */}
+      {/* Fixed History Button */}
       <Button
         onClick={() => setShowHistoryDialog(true)}
-        className="fixed bottom-6 right-6 h-14 w-14 rounded-full shadow-lg"
+        className="fixed bottom-6 right-6 h-14 w-14 rounded-full shadow-lg z-50"
         size="icon"
       >
         <History className="h-6 w-6" />

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { BarcodeDisplay } from '@/components/BarcodeDisplay';
 import { ProductImageSearch } from '@/components/ProductImageSearch';
 import { QuickSelectChips } from '@/components/QuickSelectChips';
