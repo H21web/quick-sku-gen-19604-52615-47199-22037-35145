@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
 import { Search, X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Scan, ExternalLink, History } from 'lucide-react';
@@ -53,23 +53,29 @@ export const ProductImageSearch = () => {
   useEffect(() => {
     const savedHistory = localStorage.getItem('searchHistory');
     if (savedHistory) {
-      setSearchHistory(JSON.parse(savedHistory));
+      try {
+        setSearchHistory(JSON.parse(savedHistory));
+      } catch {
+        localStorage.removeItem('searchHistory');
+      }
     }
   }, []);
 
-  // Save search to history
+  // Save search to history - Fixed dependency issue
   const saveToHistory = useCallback((productId: string, jiomartUrl?: string) => {
-    const newHistoryItem: SearchHistoryItem = {
-      id: Date.now().toString(),
-      productId,
-      timestamp: Date.now(),
-      jiomartUrl
-    };
-    
-    const updatedHistory = [newHistoryItem, ...searchHistory].slice(0, 20); // Keep last 20
-    setSearchHistory(updatedHistory);
-    localStorage.setItem('searchHistory', JSON.stringify(updatedHistory));
-  }, [searchHistory]);
+    setSearchHistory((prevHistory) => {
+      const newHistoryItem: SearchHistoryItem = {
+        id: Date.now().toString(),
+        productId,
+        timestamp: Date.now(),
+        jiomartUrl
+      };
+      
+      const updatedHistory = [newHistoryItem, ...prevHistory].slice(0, 20);
+      localStorage.setItem('searchHistory', JSON.stringify(updatedHistory));
+      return updatedHistory;
+    });
+  }, []);
 
   const handleSearch = useCallback(async () => {
     if (!productId.trim()) {
@@ -78,7 +84,7 @@ export const ProductImageSearch = () => {
     }
 
     if (!GOOGLE_SEARCH_ENGINE_ID) {
-      toast.error('Google Search Engine ID not configured. Please add it to config.ts');
+      toast.error('Google Search Engine ID not configured');
       return;
     }
 
@@ -90,15 +96,14 @@ export const ProductImageSearch = () => {
       const apiKey = getRandomApiKey();
       const query = `site:jiomart.com ${productId}`;
       
-      // Parallel search for both images and web results
+      // Parallel search for both images and web results - Optimized
       const [imageResponse, webResponse] = await Promise.all([
-        fetch(`https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&searchType=image&num=5&fields=items(link)`),
+        fetch(`https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&searchType=image&num=10&fields=items(link)`),
         fetch(`https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&num=1&fields=items(link)`)
       ]);
 
       if (!imageResponse.ok) {
-        const errorData = await imageResponse.json();
-        console.error('Google API error:', errorData);
+        const errorData = await imageResponse.json().catch(() => ({}));
         throw new Error(errorData.error?.message || 'Failed to fetch images');
       }
 
@@ -107,58 +112,68 @@ export const ProductImageSearch = () => {
         webResponse.json()
       ]);
       
-      // Extract JioMart product page URL
+      // Extract JioMart URL
       let foundUrl = '';
-      if (webData.items && webData.items.length > 0) {
-        const productUrl = webData.items[0].link;
-        if (productUrl.includes('jiomart.com')) {
-          setJiomartUrl(productUrl);
-          foundUrl = productUrl;
-        }
+      if (webData.items?.[0]?.link?.includes('jiomart.com')) {
+        foundUrl = webData.items[0].link;
+        setJiomartUrl(foundUrl);
       }
       
-      // Save to history
       saveToHistory(productId, foundUrl);
       
-      if (!imageData.items || imageData.items.length === 0) {
-        toast.error('No images found for this product ID');
+      if (!imageData.items?.length) {
+        toast.error('No images found');
         return;
       }
 
-      // Get all initial links
-      const initialLinks: string[] = imageData.items.map((item: any) => item.link);
-      const initialUnique = Array.from(new Set(initialLinks));
-      
-      // Extract all JioMart images upfront
-      const jiomartLinks = initialUnique.filter((url) =>
-        url.includes('jiomart.com/images/product')
-      );
+      // Get unique JioMart image links
+      const jiomartLinks = Array.from(new Set(
+        imageData.items
+          .map((item: any) => item.link)
+          .filter((url: string) => url.includes('jiomart.com/images/product'))
+      ));
 
-      toast.info('Extracting all product images...');
+      if (!jiomartLinks.length) {
+        toast.error('No product images found');
+        return;
+      }
 
-      // Wait for all extractions to complete
-      const extractionResults = await Promise.allSettled(
-        jiomartLinks.map((url) => extractAllProductImages(url))
-      );
+      // Extract images in parallel with limit to avoid overwhelming
+      const batchSize = 5;
+      const allImages: string[] = [];
       
-      const allExtractedImages = extractionResults.flatMap((r) => 
-        (r.status === 'fulfilled' ? r.value : [])
-      );
+      for (let i = 0; i < jiomartLinks.length; i += batchSize) {
+        const batch = jiomartLinks.slice(i, i + batchSize);
+        const results = await Promise.allSettled(
+          batch.map((url: string) => extractAllProductImages(url))
+        );
+        
+        results.forEach((r) => {
+          if (r.status === 'fulfilled' && Array.isArray(r.value)) {
+            allImages.push(...r.value);
+          }
+        });
+      }
 
-      // Only use high-quality extracted images, remove duplicates
-      const highQualityImages = Array.from(new Set(allExtractedImages.filter(url => 
-        url.includes('/original/')
-      )));
+      // Filter high-quality unique images
+      const highQualityImages = Array.from(new Set(
+        allImages.filter(url => url.includes('/original/'))
+      ));
       
+      if (!highQualityImages.length) {
+        toast.error('No high-quality images found');
+        return;
+      }
+
       setExtractedImages(highQualityImages);
       toast.success(`Found ${highQualityImages.length} images`);
     } catch (error: any) {
       console.error('Search error:', error);
-      toast.error(error.message || 'Failed to search. Please try again.');
+      toast.error(error.message || 'Search failed. Try again.');
     } finally {
       setLoading(false);
     }
-  }, [productId]);
+  }, [productId, saveToHistory]);
 
   const openImage = (index: number) => {
     setSelectedImageIndex(index);
@@ -397,9 +412,36 @@ export const ProductImageSearch = () => {
     setIsProcessingOCR(true);
     
     try {
-      // Call OCR.space API
+      // Compress image for faster upload - convert to lower quality JPEG
+      const img = new Image();
+      img.src = imageData;
+      await new Promise((resolve) => { img.onload = resolve; });
+      
+      const canvas = document.createElement('canvas');
+      const maxDimension = 1024;
+      let width = img.width;
+      let height = img.height;
+      
+      if (width > height && width > maxDimension) {
+        height = (height / width) * maxDimension;
+        width = maxDimension;
+      } else if (height > maxDimension) {
+        width = (width / height) * maxDimension;
+        height = maxDimension;
+      }
+      
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, width, height);
+      }
+      
+      const compressedImage = canvas.toDataURL('image/jpeg', 0.85);
+
+      // Call OCR.space API with optimized settings
       const formData = new FormData();
-      formData.append('base64Image', imageData);
+      formData.append('base64Image', compressedImage);
       formData.append('apikey', OCR_SPACE_API_KEY);
       formData.append('language', 'eng');
       formData.append('isOverlayRequired', 'false');
@@ -413,97 +455,77 @@ export const ProductImageSearch = () => {
       });
 
       if (!response.ok) {
-        throw new Error('OCR API request failed');
+        throw new Error('OCR failed');
       }
 
       const result = await response.json();
       
       if (result.IsErroredOnProcessing) {
-        throw new Error(result.ErrorMessage?.[0] || 'OCR processing failed');
+        throw new Error(result.ErrorMessage?.[0] || 'OCR failed');
       }
 
       const extractedText = result.ParsedResults?.[0]?.ParsedText || '';
-      console.log('Extracted text:', extractedText);
       setExtractedText(extractedText);
       
-      // Parse text into selectable segments
-      const words = extractedText.split(/\s+/).filter((w: string) => w.trim().length > 0);
-      const selectable = words.map((word: string) => {
-        const cleanWord = word.trim();
-        const isLongNumber = /^\d{6,}$/.test(cleanWord);
-        const hasDigits = /\d/.test(cleanWord);
-        return {
-          text: cleanWord,
-          isNumber: isLongNumber || hasDigits
-        };
-      });
+      // Parse text efficiently
+      const words = extractedText.split(/\s+/).filter(w => w.trim());
+      const selectable = words.map((word) => ({
+        text: word.trim(),
+        isNumber: /\d{6,}/.test(word) || /\d/.test(word)
+      }));
       
       setSelectableTexts(selectable);
       
-      // Find primary IDs - ONLY extract text AFTER "ID : "
+      // Extract IDs efficiently
+      const foundIDs = new Set<string>();
       const lines = extractedText.split('\n');
-      const foundIDs: string[] = [];
       
+      // Priority 1: ID patterns
       for (const line of lines) {
-        // Look for "ID:" or "ID :" patterns and extract ONLY the digits after it
-        const idMatch = line.match(/ID\s*[:：]\s*(\d+)/i);
-        if (idMatch && idMatch[1]) {
-          const cleanID = idMatch[1].trim();
-          if (cleanID.length >= 6 && !foundIDs.includes(cleanID)) {
-            foundIDs.push(cleanID);
-          }
-        }
+        const idMatch = line.match(/ID\s*[:：]?\s*(\d{6,})/i);
+        if (idMatch?.[1]) foundIDs.add(idMatch[1]);
       }
       
-      // Only add standalone numbers if no ID pattern was found
-      if (foundIDs.length === 0) {
+      // Priority 2: Standalone 8+ digit numbers
+      if (foundIDs.size === 0) {
         for (const line of lines) {
-          const numberMatch = line.match(/\b(\d{8,})\b/);
-          if (numberMatch && !foundIDs.includes(numberMatch[1])) {
-            foundIDs.push(numberMatch[1]);
-          }
+          const numMatch = line.match(/\b(\d{8,})\b/);
+          if (numMatch?.[1]) foundIDs.add(numMatch[1]);
         }
       }
       
-      const uniqueIDs = Array.from(new Set(foundIDs));
+      const uniqueIDs = Array.from(foundIDs);
       setDetectedIDs(uniqueIDs);
       
       if (uniqueIDs.length === 0) {
-        toast.info('No IDs detected. Tap any text to search.');
+        toast.info('No IDs detected. Tap any text.');
       } else {
-        toast.success(`Detected ${uniqueIDs.length} ID(s)`);
+        toast.success(`Found ${uniqueIDs.length} ID(s)`);
       }
     } catch (error: any) {
       console.error('OCR error:', error);
-      toast.error(error.message || 'Failed to extract text. Please try again.');
+      toast.error('OCR failed. Try again.');
     } finally {
       setIsProcessingOCR(false);
     }
   };
 
-  const useDetectedID = (id: string) => {
+  const useDetectedID = useCallback((id: string) => {
     setProductId(id);
     stopCamera();
-    toast.success(`Searching for: ${id}`);
-    // Trigger search automatically
-    setTimeout(() => {
-      handleSearch();
-    }, 100);
-  };
+    toast.success(`Searching: ${id}`);
+    setTimeout(() => handleSearch(), 50);
+  }, [handleSearch]);
 
-  const handleTextSelect = (text: string) => {
-    // Clean the text - extract numbers if present
+  const handleTextSelect = useCallback((text: string) => {
     const numbers = text.match(/\d+/g);
     const searchText = numbers ? numbers.join('') : text;
     
     setProductId(searchText);
     stopCamera();
-    toast.success(`Searching for: ${searchText}`);
-    // Auto-search
-    setTimeout(() => {
-      handleSearch();
-    }, 100);
-  };
+    toast.success(`Searching: ${searchText}`);
+    setTimeout(() => handleSearch(), 50);
+  }, [handleSearch]);
 
   useEffect(() => {
     return () => {
@@ -540,10 +562,24 @@ export const ProductImageSearch = () => {
       </div>
 
 
+      {/* Loading Skeletons */}
+      {loading && (
+        <div className="space-y-3">
+          <Skeleton className="h-6 w-48" />
+          <div className="columns-2 sm:columns-3 md:columns-4 gap-3">
+            {[...Array(8)].map((_, i) => (
+              <div key={i} className="mb-3 break-inside-avoid">
+                <Skeleton className="w-full aspect-square rounded-lg" />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Extracted Images Grid */}
       {extractedImages.length > 0 && (
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-2">
             <h3 className="text-sm font-medium">Product Images ({extractedImages.length})</h3>
             {jiomartUrl && (
               <Button
@@ -553,7 +589,7 @@ export const ProductImageSearch = () => {
                 className="gap-2"
               >
                 <ExternalLink className="w-4 h-4" />
-                Open Product Page
+                Open Product
               </Button>
             )}
           </div>
@@ -561,14 +597,15 @@ export const ProductImageSearch = () => {
             {extractedImages.map((url, index) => (
               <div
                 key={url}
-                className="mb-3 break-inside-avoid rounded-lg border border-border hover:border-primary transition-all overflow-hidden cursor-pointer group bg-muted"
+                className="mb-3 break-inside-avoid rounded-lg border border-border hover:border-primary transition-all overflow-hidden cursor-pointer group bg-muted/50"
                 onClick={() => openImage(index)}
               >
                 <img
                   src={url}
-                  alt={`Product image ${index + 1}`}
+                  alt={`Product ${index + 1}`}
                   className="w-full h-auto object-cover transition-all duration-300 group-hover:opacity-90"
                   loading="lazy"
+                  decoding="async"
                 />
               </div>
             ))}
@@ -871,8 +908,9 @@ export const ProductImageSearch = () => {
       {/* Fixed History Button */}
       <Button
         onClick={() => setShowHistoryDialog(true)}
-        className="fixed bottom-6 right-6 h-14 w-14 rounded-full shadow-lg z-50"
+        className="fixed bottom-6 right-6 h-14 w-14 rounded-full shadow-2xl z-50 hover:scale-110 transition-transform"
         size="icon"
+        title="Search History"
       >
         <History className="h-6 w-6" />
       </Button>
