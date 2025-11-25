@@ -7,7 +7,8 @@ import { toast } from 'sonner';
 import { extractAllProductImages } from '@/lib/imageExtractor';
 import { getRandomApiKey, GOOGLE_SEARCH_ENGINE_ID } from '@/lib/config';
 import { Skeleton } from './ui/skeleton';
-import { createWorker, PSM, Worker } from 'tesseract.js';
+
+const OCR_SPACE_API_KEY = 'K86120042088957';
 
 interface ImageResult {
   imageUrl: string;
@@ -45,13 +46,8 @@ export const ProductImageSearch = () => {
   const [jiomartUrl, setJiomartUrl] = useState<string>('');
   const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>([]);
   const [showHistoryDialog, setShowHistoryDialog] = useState(false);
-  const [isSelectingRegion, setIsSelectingRegion] = useState(false);
-  const [selectionStart, setSelectionStart] = useState<{ x: number; y: number } | null>(null);
-  const [selectionEnd, setSelectionEnd] = useState<{ x: number; y: number } | null>(null);
-  const capturedImageRef = useRef<HTMLImageElement | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const ocrWorkerRef = useRef<Worker | null>(null);
 
   // Load search history from localStorage
   useEffect(() => {
@@ -394,237 +390,45 @@ export const ProductImageSearch = () => {
     setExtractedText('');
     setDetectedIDs([]);
     setSelectableTexts([]);
-    setIsSelectingRegion(false);
-    setSelectionStart(null);
-    setSelectionEnd(null);
     startCamera();
-  };
-
-  const startRegionSelection = () => {
-    setIsSelectingRegion(true);
-    setSelectionStart(null);
-    setSelectionEnd(null);
-    toast.info('Draw a box around the ID text');
-  };
-
-  const handleSelectionStart = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
-    if (!isSelectingRegion) return;
-    
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = 'touches' in e ? e.touches[0].clientX - rect.left : e.clientX - rect.left;
-    const y = 'touches' in e ? e.touches[0].clientY - rect.top : e.clientY - rect.top;
-    
-    setSelectionStart({ x, y });
-    setSelectionEnd({ x, y });
-  };
-
-  const handleSelectionMove = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
-    if (!isSelectingRegion || !selectionStart) return;
-    
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = 'touches' in e ? e.touches[0].clientX - rect.left : e.clientX - rect.left;
-    const y = 'touches' in e ? e.touches[0].clientY - rect.top : e.clientY - rect.top;
-    
-    setSelectionEnd({ x, y });
-  };
-
-  const handleSelectionEnd = async () => {
-    if (!isSelectingRegion || !selectionStart || !selectionEnd || !capturedImage) return;
-    
-    setIsSelectingRegion(false);
-    setIsProcessingOCR(true);
-
-    try {
-      const img = capturedImageRef.current;
-      if (!img) return;
-
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-
-      // Calculate selection bounds
-      const x = Math.min(selectionStart.x, selectionEnd.x);
-      const y = Math.min(selectionStart.y, selectionEnd.y);
-      const width = Math.abs(selectionEnd.x - selectionStart.x);
-      const height = Math.abs(selectionEnd.y - selectionStart.y);
-
-      // Scale to actual image dimensions
-      const scaleX = img.naturalWidth / img.width;
-      const scaleY = img.naturalHeight / img.height;
-
-      canvas.width = width * scaleX;
-      canvas.height = height * scaleY;
-
-      ctx.drawImage(
-        img,
-        x * scaleX,
-        y * scaleY,
-        width * scaleX,
-        height * scaleY,
-        0,
-        0,
-        canvas.width,
-        canvas.height
-      );
-
-      // Preprocess cropped image
-      const croppedDataUrl = canvas.toDataURL('image/png');
-      const preprocessed = await preprocessImage(croppedDataUrl);
-
-      // OCR on selected region only
-      if (!ocrWorkerRef.current) {
-        ocrWorkerRef.current = await createWorker('eng', 1, {
-          cachePath: '.',
-          cacheMethod: 'write'
-        });
-      }
-
-      await ocrWorkerRef.current.setParameters({
-        tessedit_char_whitelist: '0123456789IDid: ',
-        tessedit_pageseg_mode: PSM.SPARSE_TEXT,
-      });
-
-      const { data } = await ocrWorkerRef.current.recognize(preprocessed);
-      const text = data.text.trim();
-      setExtractedText(text);
-
-      // Extract ID
-      const idMatch = text.match(/ID\s*:?\s*(\d+)/i);
-      const extractedId = idMatch ? idMatch[1] : text.match(/\d{8,}/)?.[0] || '';
-
-      if (extractedId) {
-        setProductId(extractedId);
-        setShowCameraDialog(false);
-        stopCamera();
-        setTimeout(() => handleSearch(), 100);
-      } else {
-        toast.error('No ID found in selected region');
-      }
-    } catch (error) {
-      console.error('Region OCR error:', error);
-      toast.error('Failed to extract text from region');
-    } finally {
-      setIsProcessingOCR(false);
-      setSelectionStart(null);
-      setSelectionEnd(null);
-    }
-  };
-
-  // Initialize OCR worker once and reuse
-  useEffect(() => {
-    const initWorker = async () => {
-      try {
-        const worker = await createWorker('eng', 1, {
-          logger: () => {}, // Disable logging for speed
-        });
-        ocrWorkerRef.current = worker;
-      } catch (error) {
-        console.error('Failed to initialize OCR worker:', error);
-      }
-    };
-    
-    initWorker();
-    
-    return () => {
-      if (ocrWorkerRef.current) {
-        ocrWorkerRef.current.terminate();
-      }
-    };
-  }, []);
-
-  // Advanced pre-processing for blur/shaky images
-  const preprocessImage = (imageData: string): Promise<string> => {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d')!;
-        
-        // Scale up significantly for better recognition of blur/shaky images
-        const scale = 3;
-        canvas.width = img.width * scale;
-        canvas.height = img.height * scale;
-        
-        // Apply aggressive sharpening and contrast for blur/shaky images
-        ctx.filter = 'contrast(2) brightness(1.2) saturate(0)';
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        
-        // Get image data for advanced processing
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const data = imageData.data;
-        
-        // Convert to grayscale with enhanced contrast
-        for (let i = 0; i < data.length; i += 4) {
-          const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-          // Apply threshold for better text detection
-          const threshold = gray > 128 ? 255 : 0;
-          data[i] = data[i + 1] = data[i + 2] = threshold;
-        }
-        
-        ctx.putImageData(imageData, 0, 0);
-        
-        // Apply unsharp mask for blur reduction
-        const tempCanvas = document.createElement('canvas');
-        const tempCtx = tempCanvas.getContext('2d')!;
-        tempCanvas.width = canvas.width;
-        tempCanvas.height = canvas.height;
-        tempCtx.filter = 'blur(1px)';
-        tempCtx.drawImage(canvas, 0, 0);
-        
-        // Combine original and blurred for sharpening
-        ctx.globalAlpha = 1.5;
-        ctx.drawImage(canvas, 0, 0);
-        ctx.globalAlpha = -0.5;
-        ctx.globalCompositeOperation = 'lighter';
-        ctx.drawImage(tempCanvas, 0, 0);
-        
-        resolve(canvas.toDataURL('image/jpeg', 0.98));
-      };
-      img.src = imageData;
-    });
   };
 
   const extractTextFromImage = async (imageData: string) => {
     setIsProcessingOCR(true);
     
     try {
-      // Pre-process image for better OCR
-      const processedImage = await preprocessImage(imageData);
-      
-      // Use cached worker or create new one
-      let worker = ocrWorkerRef.current;
-      if (!worker) {
-        worker = await createWorker('eng', 1, {
-          logger: () => {},
-        });
+      // Call OCR.space API
+      const formData = new FormData();
+      formData.append('base64Image', imageData);
+      formData.append('apikey', OCR_SPACE_API_KEY);
+      formData.append('language', 'eng');
+      formData.append('isOverlayRequired', 'false');
+      formData.append('detectOrientation', 'true');
+      formData.append('scale', 'true');
+      formData.append('OCREngine', '2');
+
+      const response = await fetch('https://api.ocr.space/parse/image', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error('OCR API request failed');
       }
+
+      const result = await response.json();
       
-      // Run multiple OCR passes in parallel for better accuracy
-      const [sparseResult, autoResult] = await Promise.all([
-        (async () => {
-          await worker!.setParameters({
-            tessedit_char_whitelist: '0123456789IDDesc:id ',
-            tessedit_pageseg_mode: PSM.SPARSE_TEXT,
-          });
-          return await worker!.recognize(processedImage);
-        })(),
-        (async () => {
-          await worker!.setParameters({
-            tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ',
-            tessedit_pageseg_mode: PSM.AUTO,
-          });
-          return await worker!.recognize(processedImage);
-        })()
-      ]);
-      
-      // Combine results
-      const combinedText = `${sparseResult.data.text}\n${autoResult.data.text}`;
-      console.log('Extracted text:', combinedText);
-      setExtractedText(combinedText);
+      if (result.IsErroredOnProcessing) {
+        throw new Error(result.ErrorMessage?.[0] || 'OCR processing failed');
+      }
+
+      const extractedText = result.ParsedResults?.[0]?.ParsedText || '';
+      console.log('Extracted text:', extractedText);
+      setExtractedText(extractedText);
       
       // Parse text into selectable segments
-      const words = combinedText.split(/\s+/).filter(w => w.trim().length > 0);
-      const selectable = words.map(word => {
+      const words = extractedText.split(/\s+/).filter((w: string) => w.trim().length > 0);
+      const selectable = words.map((word: string) => {
         const cleanWord = word.trim();
         const isLongNumber = /^\d{6,}$/.test(cleanWord);
         const hasDigits = /\d/.test(cleanWord);
@@ -637,7 +441,7 @@ export const ProductImageSearch = () => {
       setSelectableTexts(selectable);
       
       // Find primary IDs - ONLY extract text AFTER "ID : "
-      const lines = combinedText.split('\n');
+      const lines = extractedText.split('\n');
       const foundIDs: string[] = [];
       
       for (const line of lines) {
@@ -669,9 +473,9 @@ export const ProductImageSearch = () => {
       } else {
         toast.success(`Detected ${uniqueIDs.length} ID(s)`);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('OCR error:', error);
-      toast.error('Failed to extract text. Please try again.');
+      toast.error(error.message || 'Failed to extract text. Please try again.');
     } finally {
       setIsProcessingOCR(false);
     }
@@ -936,34 +740,12 @@ export const ProductImageSearch = () => {
             ) : (
               <>
                 {/* Captured Image Preview */}
-                <div 
-                  className="relative w-full h-full cursor-crosshair"
-                  onMouseDown={handleSelectionStart}
-                  onMouseMove={handleSelectionMove}
-                  onMouseUp={handleSelectionEnd}
-                  onTouchStart={handleSelectionStart}
-                  onTouchMove={handleSelectionMove}
-                  onTouchEnd={handleSelectionEnd}
-                >
+                <div className="relative w-full h-full">
                   <img 
-                    ref={capturedImageRef}
                     src={capturedImage} 
                     alt="Captured" 
                     className="w-full h-full object-contain"
                   />
-                  
-                  {/* Region Selection Overlay */}
-                  {isSelectingRegion && selectionStart && selectionEnd && (
-                    <div
-                      className="absolute border-2 border-primary bg-primary/20 pointer-events-none"
-                      style={{
-                        left: Math.min(selectionStart.x, selectionEnd.x),
-                        top: Math.min(selectionStart.y, selectionEnd.y),
-                        width: Math.abs(selectionEnd.x - selectionStart.x),
-                        height: Math.abs(selectionEnd.y - selectionStart.y),
-                      }}
-                    />
-                  )}
                   
                   {/* Processing Overlay */}
                   {isProcessingOCR && (
@@ -1020,38 +802,17 @@ export const ProductImageSearch = () => {
                   )}
                 </div>
                 
-                {/* Actions */}
+                {/* Retake Button */}
                 {!isProcessingOCR && selectableTexts.length === 0 && (
-                  <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 to-transparent space-y-3">
-                    <p className="text-white text-center text-sm mb-2">
-                      {isSelectingRegion ? 'Draw a box around the ID text' : 'Choose an option'}
-                    </p>
-                    <div className="flex gap-2">
-                      <Button 
-                        onClick={retakePhoto}
-                        variant="outline"
-                        className="flex-1 bg-white/10 hover:bg-white/20 text-white border-white/30"
-                        size="lg"
-                      >
-                        Retake
-                      </Button>
-                      <Button 
-                        onClick={startRegionSelection}
-                        disabled={isSelectingRegion}
-                        variant="secondary"
-                        className="flex-1"
-                        size="lg"
-                      >
-                        {isSelectingRegion ? 'Selecting...' : 'Select Region'}
-                      </Button>
-                      <Button 
-                        onClick={() => extractTextFromImage(capturedImage!)}
-                        className="flex-1"
-                        size="lg"
-                      >
-                        Full Scan
-                      </Button>
-                    </div>
+                  <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 to-transparent">
+                    <Button 
+                      onClick={retakePhoto}
+                      variant="outline"
+                      className="w-full bg-white/10 hover:bg-white/20 text-white border-white/30"
+                      size="lg"
+                    >
+                      Retake Photo
+                    </Button>
                   </div>
                 )}
               </>
