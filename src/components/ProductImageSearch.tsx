@@ -77,8 +77,10 @@ export const ProductImageSearch = () => {
     });
   }, []);
 
-  const handleSearch = useCallback(async () => {
-    if (!productId.trim()) {
+  const handleSearch = useCallback(async (searchId?: string) => {
+    const idToSearch = searchId || productId;
+    
+    if (!idToSearch.trim()) {
       toast.error('Please enter a product ID');
       return;
     }
@@ -94,9 +96,9 @@ export const ProductImageSearch = () => {
     
     try {
       const apiKey = getRandomApiKey();
-      const query = `site:jiomart.com ${productId}`;
+      const query = `site:jiomart.com ${idToSearch}`;
       
-      // Parallel search for both images and web results - Optimized
+      // Parallel search for both images and web results
       const [imageResponse, webResponse] = await Promise.all([
         fetch(`https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&searchType=image&num=10&fields=items(link)`),
         fetch(`https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&num=1&fields=items(link)`)
@@ -119,7 +121,7 @@ export const ProductImageSearch = () => {
         setJiomartUrl(foundUrl);
       }
       
-      saveToHistory(productId, foundUrl);
+      saveToHistory(idToSearch, foundUrl);
       
       if (!imageData.items?.length) {
         toast.error('No images found');
@@ -138,8 +140,8 @@ export const ProductImageSearch = () => {
         return;
       }
 
-      // Extract images in parallel with limit to avoid overwhelming
-      const batchSize = 5;
+      // Extract images in parallel - increased batch size for speed
+      const batchSize = 8;
       const allImages: string[] = [];
       
       for (let i = 0; i < jiomartLinks.length; i += batchSize) {
@@ -412,13 +414,13 @@ export const ProductImageSearch = () => {
     setIsProcessingOCR(true);
     
     try {
-      // Compress image for faster upload - convert to lower quality JPEG
+      // Aggressive compression for faster OCR
       const img = new Image();
       img.src = imageData;
       await new Promise((resolve) => { img.onload = resolve; });
       
       const canvas = document.createElement('canvas');
-      const maxDimension = 1024;
+      const maxDimension = 800; // Reduced for speed
       let width = img.width;
       let height = img.height;
       
@@ -437,7 +439,7 @@ export const ProductImageSearch = () => {
         ctx.drawImage(img, 0, 0, width, height);
       }
       
-      const compressedImage = canvas.toDataURL('image/jpeg', 0.85);
+      const compressedImage = canvas.toDataURL('image/jpeg', 0.7); // Lower quality for speed
 
       // Call OCR.space API with optimized settings
       const formData = new FormData();
@@ -514,7 +516,7 @@ export const ProductImageSearch = () => {
     setProductId(id);
     stopCamera();
     toast.success(`Searching: ${id}`);
-    setTimeout(() => handleSearch(), 50);
+    handleSearch(id); // Pass ID directly for instant search
   }, [handleSearch]);
 
   const handleTextSelect = useCallback((text: string) => {
@@ -524,7 +526,7 @@ export const ProductImageSearch = () => {
     setProductId(searchText);
     stopCamera();
     toast.success(`Searching: ${searchText}`);
-    setTimeout(() => handleSearch(), 50);
+    handleSearch(searchText); // Pass text directly for instant search
   }, [handleSearch]);
 
   useEffect(() => {
@@ -555,7 +557,7 @@ export const ProductImageSearch = () => {
         >
           <Scan className="w-4 h-4" />
         </Button>
-        <Button onClick={handleSearch} disabled={loading}>
+        <Button onClick={() => handleSearch()} disabled={loading}>
           <Search className="w-4 h-4 mr-2" />
           {loading ? 'Finding...' : 'Find'}
         </Button>
@@ -883,7 +885,7 @@ export const ProductImageSearch = () => {
                       onClick={() => {
                         setProductId(item.productId);
                         setShowHistoryDialog(false);
-                        handleSearch();
+                        handleSearch(item.productId);
                       }}
                     >
                       <Search className="h-4 w-4" />
