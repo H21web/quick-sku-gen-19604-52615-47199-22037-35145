@@ -46,6 +46,7 @@ export const ProductImageSearch = () => {
   const [jiomartUrl, setJiomartUrl] = useState<string>('');
   const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>([]);
   const [showHistoryDialog, setShowHistoryDialog] = useState(false);
+  const [searchTime, setSearchTime] = useState<number | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -90,9 +91,11 @@ export const ProductImageSearch = () => {
       return;
     }
 
+    const startTime = performance.now();
     setLoading(true);
     setExtractedImages([]);
     setJiomartUrl('');
+    setSearchTime(null);
     
     try {
       const apiKey = getRandomApiKey();
@@ -169,9 +172,15 @@ export const ProductImageSearch = () => {
 
       setExtractedImages(highQualityImages);
       toast.success(`Found ${highQualityImages.length} images`);
+      
+      const endTime = performance.now();
+      setSearchTime((endTime - startTime) / 1000);
     } catch (error: any) {
       console.error('Search error:', error);
       toast.error(error.message || 'Search failed. Try again.');
+      
+      const endTime = performance.now();
+      setSearchTime((endTime - startTime) / 1000);
     } finally {
       setLoading(false);
     }
@@ -582,7 +591,14 @@ export const ProductImageSearch = () => {
       {extractedImages.length > 0 && (
         <div className="space-y-3">
           <div className="flex items-center justify-between flex-wrap gap-2">
-            <h3 className="text-sm font-medium">Product Images ({extractedImages.length})</h3>
+            <div className="flex items-center gap-3">
+              <h3 className="text-sm font-medium">Product Images ({extractedImages.length})</h3>
+              {searchTime !== null && (
+                <span className="text-xs text-muted-foreground">
+                  {searchTime.toFixed(2)}s
+                </span>
+              )}
+            </div>
             {jiomartUrl && (
               <Button
                 variant="default"
