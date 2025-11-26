@@ -1,7 +1,7 @@
 const checkImageExists = async (url: string): Promise<boolean> => {
   return new Promise((resolve) => {
     const img = new Image();
-    const timeout = setTimeout(() => resolve(false), 2000); // Increased timeout to 2s
+    const timeout = setTimeout(() => resolve(false), 300); // Fast 300ms timeout
     img.onload = () => {
       clearTimeout(timeout);
       resolve(true);
@@ -51,7 +51,7 @@ export const extractAllProductImages = async (firstImageUrl: string): Promise<st
     return [];
   }
 
-  const MAX_CHECKS = 10;
+  const MAX_CHECKS = 15; // Increased for more coverage
   
   // Create all URLs to check in parallel
   const productUrls = Array.from({ length: MAX_CHECKS }, (_, i) => 
@@ -61,27 +61,21 @@ export const extractAllProductImages = async (firstImageUrl: string): Promise<st
     buildImageUrl(parts, 'legal-images', i)
   );
 
-  // Check all images in parallel
-  const [productResults, legalResults] = await Promise.all([
-    Promise.all(productUrls.map(async (url) => ({
+  // Check all images in parallel with fast timeout
+  const allUrls = [...productUrls, ...legalUrls];
+  const results = await Promise.all(
+    allUrls.map(async (url) => ({
       url,
       exists: await checkImageExists(url)
-    }))),
-    Promise.all(legalUrls.map(async (url) => ({
-      url,
-      exists: await checkImageExists(url)
-    })))
-  ]);
+    }))
+  );
 
-  const validImages = [
-    ...productResults.filter(r => r.exists).map(r => r.url),
-    ...legalResults.filter(r => r.exists).map(r => r.url)
-  ];
+  const validImages = results.filter(r => r.exists).map(r => r.url);
 
-  // Fallback: try incrementing pNumber if no images found
+  // Quick fallback: try incrementing pNumber if no images found
   if (validImages.length === 0) {
     const modifiedParts = { ...parts, pNumber: (parseInt(parts.pNumber) + 1).toString() };
-    const fallbackUrls = Array.from({ length: 5 }, (_, i) => 
+    const fallbackUrls = Array.from({ length: 8 }, (_, i) => 
       buildImageUrl(modifiedParts, 'product-images', i)
     );
     const fallbackResults = await Promise.all(
