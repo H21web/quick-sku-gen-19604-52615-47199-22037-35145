@@ -429,7 +429,7 @@ export const ProductImageSearch = () => {
       await new Promise((resolve) => { img.onload = resolve; });
       
       const canvas = document.createElement('canvas');
-      const maxDimension = 800; // Reduced for speed
+      const maxDimension = 600; // Further reduced for maximum speed
       let width = img.width;
       let height = img.height;
       
@@ -448,17 +448,16 @@ export const ProductImageSearch = () => {
         ctx.drawImage(img, 0, 0, width, height);
       }
       
-      const compressedImage = canvas.toDataURL('image/jpeg', 0.7); // Lower quality for speed
+      const compressedImage = canvas.toDataURL('image/jpeg', 0.6); // Maximum compression for speed
 
-      // Call OCR.space API with optimized settings
+      // Call OCR.space API with speed-optimized settings
       const formData = new FormData();
       formData.append('base64Image', compressedImage);
       formData.append('apikey', OCR_SPACE_API_KEY);
       formData.append('language', 'eng');
       formData.append('isOverlayRequired', 'false');
-      formData.append('detectOrientation', 'true');
-      formData.append('scale', 'true');
-      formData.append('OCREngine', '2');
+      formData.append('detectOrientation', 'false'); // Disabled for speed
+      formData.append('OCREngine', '1'); // Engine 1 is faster
 
       const response = await fetch('https://api.ocr.space/parse/image', {
         method: 'POST',
