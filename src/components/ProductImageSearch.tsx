@@ -173,6 +173,12 @@ export const ProductImageSearch = () => {
       setExtractedImages(finalImages);
       toast.success(`Found ${finalImages.length} images`);
       
+      // Preload all images immediately
+      finalImages.forEach(url => {
+        const img = new Image();
+        img.src = url;
+      });
+      
       const endTime = performance.now();
       setSearchTime((endTime - startTime) / 1000);
     } catch (error: any) {
@@ -645,7 +651,7 @@ export const ProductImageSearch = () => {
                   src={url}
                   alt={`Product ${index + 1}`}
                   className="w-full h-auto object-cover transition-all duration-300 group-hover:opacity-90"
-                  loading="lazy"
+                  loading="eager"
                   decoding="async"
                 />
               </div>
