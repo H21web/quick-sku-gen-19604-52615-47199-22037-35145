@@ -160,24 +160,36 @@ export const ProductImageSearch = () => {
         });
       }
 
-      // Filter unique images - prioritize original, but include all valid images
+      // Filter unique images - show ALL unique images for complete results
       const uniqueImages = Array.from(new Set(allImages));
-      const originalImages = uniqueImages.filter(url => url.includes('/original/'));
-      const finalImages = originalImages.length > 0 ? originalImages : uniqueImages;
       
-      if (!finalImages.length) {
+      // Sort: original images first, then others
+      const sortedImages = [
+        ...uniqueImages.filter(url => url.includes('/original/')),
+        ...uniqueImages.filter(url => !url.includes('/original/'))
+      ];
+      
+      if (!sortedImages.length) {
         toast.error('No images found');
         return;
       }
 
-      setExtractedImages(finalImages);
-      toast.success(`Found ${finalImages.length} images`);
+      setExtractedImages(sortedImages);
+      toast.success(`Found ${sortedImages.length} images`);
       
-      // Preload all images immediately
-      finalImages.forEach(url => {
+      // Preload primary images immediately (first 4)
+      sortedImages.slice(0, 4).forEach(url => {
         const img = new Image();
         img.src = url;
       });
+      
+      // Lazy preload remaining images after a short delay
+      setTimeout(() => {
+        sortedImages.slice(4).forEach(url => {
+          const img = new Image();
+          img.src = url;
+        });
+      }, 500);
       
       const endTime = performance.now();
       setSearchTime((endTime - startTime) / 1000);
@@ -205,18 +217,26 @@ export const ProductImageSearch = () => {
   };
 
   const goToPrevious = () => {
-    if (selectedImageIndex !== null && selectedImageIndex > 0) {
-      setSelectedImageIndex(selectedImageIndex - 1);
+    if (selectedImageIndex !== null && selectedImageIndex > 0 && !isTransitioning) {
+      setIsTransitioning(true);
       setZoom(1);
       setPosition({ x: 0, y: 0 });
+      setTimeout(() => {
+        setSelectedImageIndex(selectedImageIndex - 1);
+        setIsTransitioning(false);
+      }, 100);
     }
   };
 
   const goToNext = () => {
-    if (selectedImageIndex !== null && selectedImageIndex < extractedImages.length - 1) {
-      setSelectedImageIndex(selectedImageIndex + 1);
+    if (selectedImageIndex !== null && selectedImageIndex < extractedImages.length - 1 && !isTransitioning) {
+      setIsTransitioning(true);
       setZoom(1);
       setPosition({ x: 0, y: 0 });
+      setTimeout(() => {
+        setSelectedImageIndex(selectedImageIndex + 1);
+        setIsTransitioning(false);
+      }, 100);
     }
   };
 
@@ -644,14 +664,15 @@ export const ProductImageSearch = () => {
             {extractedImages.map((url, index) => (
               <div
                 key={url}
-                className="mb-3 break-inside-avoid rounded-lg border border-border hover:border-primary transition-all overflow-hidden cursor-pointer group bg-muted/50"
+                className="mb-3 break-inside-avoid rounded-lg border border-border hover:border-primary transition-all duration-200 overflow-hidden cursor-pointer group bg-muted/50 animate-fade-in"
+                style={{ animationDelay: `${Math.min(index * 50, 300)}ms` }}
                 onClick={() => openImage(index)}
               >
                 <img
                   src={url}
                   alt={`Product ${index + 1}`}
-                  className="w-full h-auto object-cover transition-all duration-300 group-hover:opacity-90"
-                  loading="eager"
+                  className="w-full h-auto object-cover transition-transform duration-300 ease-out group-hover:scale-[1.02] group-hover:opacity-95"
+                  loading={index < 4 ? "eager" : "lazy"}
                   decoding="async"
                 />
               </div>
@@ -718,7 +739,7 @@ export const ProductImageSearch = () => {
               >
                 <div 
                   ref={imageRef}
-                  className="relative w-full h-full flex items-center justify-center touch-none"
+                  className="relative w-full h-full flex items-center justify-center touch-none select-none"
                   onClick={(e) => e.stopPropagation()}
                   onTouchStart={handleTouchStart}
                   onTouchMove={handleTouchMove}
@@ -733,14 +754,17 @@ export const ProductImageSearch = () => {
                     alt={`Product ${selectedImageIndex + 1}`}
                     style={{ 
                       transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})`, 
-                      transition: (isDragging || touchStartRef.current) && !isTransitioning ? 'none' : 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                      transition: (isDragging || touchStartRef.current) && !isTransitioning 
+                        ? 'none' 
+                        : 'transform 0.25s cubic-bezier(0.22, 1, 0.36, 1)',
                       cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default',
                       transformOrigin: 'center center',
                       userSelect: 'none',
                       WebkitUserSelect: 'none',
-                      touchAction: 'none'
+                      touchAction: 'none',
+                      willChange: 'transform'
                     }}
-                    className="max-w-[80vw] max-h-[80vh] object-contain"
+                    className="max-w-[80vw] max-h-[80vh] object-contain animate-scale-in"
                     draggable={false}
                   />
                 </div>
