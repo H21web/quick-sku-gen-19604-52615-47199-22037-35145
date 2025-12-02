@@ -25,6 +25,8 @@ interface SearchHistoryItem {
 export const ProductImageSearch = () => {
   const [productId, setProductId] = useState('');
   const [extractedImages, setExtractedImages] = useState<string[]>([]);
+  const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set());
+  const [imageLoadKey, setImageLoadKey] = useState(0);
   const [loading, setLoading] = useState(false);
   const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
   const [zoom, setZoom] = useState(1);
@@ -94,6 +96,7 @@ export const ProductImageSearch = () => {
     const startTime = performance.now();
     setLoading(true);
     setExtractedImages([]);
+    setLoadedImages(new Set());
     setJiomartUrl('');
     setSearchTime(null);
     
@@ -175,21 +178,33 @@ export const ProductImageSearch = () => {
       }
 
       setExtractedImages(sortedImages);
+      setImageLoadKey(prev => prev + 1);
       toast.success(`Found ${sortedImages.length} images`);
       
-      // Preload primary images immediately (first 4)
-      sortedImages.slice(0, 4).forEach(url => {
-        const img = new Image();
-        img.src = url;
-      });
-      
-      // Lazy preload remaining images after a short delay
-      setTimeout(() => {
-        sortedImages.slice(4).forEach(url => {
+      // Progressive image preloading with state updates to trigger re-renders
+      const preloadImage = (url: string): Promise<string> => {
+        return new Promise((resolve) => {
           const img = new Image();
+          img.onload = () => {
+            setLoadedImages(prev => new Set([...prev, url]));
+            resolve(url);
+          };
+          img.onerror = () => resolve(url);
           img.src = url;
         });
-      }, 500);
+      };
+      
+      // Load first batch immediately (first 6 images)
+      const firstBatch = sortedImages.slice(0, 6);
+      await Promise.all(firstBatch.map(preloadImage));
+      
+      // Load remaining images progressively in batches
+      const remainingImages = sortedImages.slice(6);
+      const batchLoadSize = 4;
+      for (let i = 0; i < remainingImages.length; i += batchLoadSize) {
+        const batch = remainingImages.slice(i, i + batchLoadSize);
+        await Promise.all(batch.map(preloadImage));
+      }
       
       const endTime = performance.now();
       setSearchTime((endTime - startTime) / 1000);
@@ -660,20 +675,24 @@ export const ProductImageSearch = () => {
               </Button>
             )}
           </div>
-          <div className="columns-2 sm:columns-3 md:columns-4 gap-3 [column-fill:_balance]">
+          <div key={imageLoadKey} className="columns-2 sm:columns-3 md:columns-4 gap-3 [column-fill:_balance]">
             {extractedImages.map((url, index) => (
               <div
-                key={url}
-                className="mb-3 break-inside-avoid rounded-lg border border-border hover:border-primary transition-all duration-200 overflow-hidden cursor-pointer group bg-muted/50 animate-fade-in"
-                style={{ animationDelay: `${Math.min(index * 50, 300)}ms` }}
+                key={`${url}-${imageLoadKey}`}
+                className={`mb-3 break-inside-avoid rounded-lg border border-border hover:border-primary transition-all duration-200 overflow-hidden cursor-pointer group bg-muted/50 ${loadedImages.has(url) || index < 6 ? 'animate-fade-in' : 'opacity-0'}`}
+                style={{ 
+                  animationDelay: `${Math.min(index * 30, 200)}ms`,
+                  opacity: loadedImages.has(url) || index < 6 ? undefined : 0
+                }}
                 onClick={() => openImage(index)}
               >
                 <img
                   src={url}
                   alt={`Product ${index + 1}`}
                   className="w-full h-auto object-cover transition-transform duration-300 ease-out group-hover:scale-[1.02] group-hover:opacity-95"
-                  loading={index < 4 ? "eager" : "lazy"}
+                  loading="eager"
                   decoding="async"
+                  onLoad={() => setLoadedImages(prev => new Set([...prev, url]))}
                 />
               </div>
             ))}
