@@ -160,18 +160,18 @@ export const ProductImageSearch = () => {
         });
       }
 
-      // Filter high-quality unique images
-      const highQualityImages = Array.from(new Set(
-        allImages.filter(url => url.includes('/original/'))
-      ));
+      // Filter unique images - prioritize original, but include all valid images
+      const uniqueImages = Array.from(new Set(allImages));
+      const originalImages = uniqueImages.filter(url => url.includes('/original/'));
+      const finalImages = originalImages.length > 0 ? originalImages : uniqueImages;
       
-      if (!highQualityImages.length) {
-        toast.error('No high-quality images found');
+      if (!finalImages.length) {
+        toast.error('No images found');
         return;
       }
 
-      setExtractedImages(highQualityImages);
-      toast.success(`Found ${highQualityImages.length} images`);
+      setExtractedImages(finalImages);
+      toast.success(`Found ${finalImages.length} images`);
       
       const endTime = performance.now();
       setSearchTime((endTime - startTime) / 1000);
@@ -450,14 +450,15 @@ export const ProductImageSearch = () => {
       
       const compressedImage = canvas.toDataURL('image/jpeg', 0.6); // Maximum compression for speed
 
-      // Call OCR.space API with speed-optimized settings
+      // Call OCR.space API - balanced for accuracy on blurry images
       const formData = new FormData();
       formData.append('base64Image', compressedImage);
       formData.append('apikey', OCR_SPACE_API_KEY);
       formData.append('language', 'eng');
       formData.append('isOverlayRequired', 'false');
-      formData.append('detectOrientation', 'false'); // Disabled for speed
-      formData.append('OCREngine', '1'); // Engine 1 is faster
+      formData.append('detectOrientation', 'true'); // Helps with tilted images
+      formData.append('scale', 'true'); // Upscales blurry images for better accuracy
+      formData.append('OCREngine', '2'); // Engine 2 is more accurate for low quality images
 
       const response = await fetch('https://api.ocr.space/parse/image', {
         method: 'POST',
@@ -486,25 +487,47 @@ export const ProductImageSearch = () => {
       
       setSelectableTexts(selectable);
       
-      // Extract IDs efficiently
+      // Extract IDs with robust pattern matching for blurry/shaky images
       const foundIDs = new Set<string>();
-      const lines = extractedText.split('\n');
+      const fullText = extractedText.replace(/\n/g, ' ');
       
-      // Priority 1: ID patterns
-      for (const line of lines) {
-        const idMatch = line.match(/ID\s*[:：]?\s*(\d{6,})/i);
-        if (idMatch?.[1]) foundIDs.add(idMatch[1]);
+      // Clean OCR artifacts (common misreads)
+      const cleanedText = fullText
+        .replace(/[oO]/g, '0') // O often misread as 0 in numbers
+        .replace(/[lI|]/g, '1') // l, I, | often misread as 1
+        .replace(/[sS]/g, '5') // S sometimes misread as 5
+        .replace(/[bB]/g, '8'); // B sometimes misread as 8
+      
+      // Priority 1: ID label patterns (flexible spacing/characters)
+      const idPatterns = [
+        /ID\s*[:：.,-]?\s*(\d{5,})/gi,
+        /[1I]D\s*[:：.,-]?\s*(\d{5,})/gi,
+        /Product\s*[:：.,-]?\s*(\d{5,})/gi,
+        /Item\s*[:：.,-]?\s*(\d{5,})/gi,
+        /Code\s*[:：.,-]?\s*(\d{5,})/gi,
+      ];
+      
+      for (const pattern of idPatterns) {
+        const matches = [...fullText.matchAll(pattern), ...cleanedText.matchAll(pattern)];
+        matches.forEach(m => m[1] && foundIDs.add(m[1].replace(/\D/g, '')));
       }
       
-      // Priority 2: Standalone 8+ digit numbers
+      // Priority 2: Any 6+ digit sequences (most JioMart IDs are 6-10 digits)
       if (foundIDs.size === 0) {
-        for (const line of lines) {
-          const numMatch = line.match(/\b(\d{8,})\b/);
-          if (numMatch?.[1]) foundIDs.add(numMatch[1]);
-        }
+        const numberMatches = [...fullText.matchAll(/\b(\d{6,12})\b/g), ...cleanedText.matchAll(/\b(\d{6,12})\b/g)];
+        numberMatches.forEach(m => m[1] && foundIDs.add(m[1]));
       }
       
-      const uniqueIDs = Array.from(foundIDs);
+      // Priority 3: Numbers with some non-digit separators (e.g., 123-456-789)
+      if (foundIDs.size === 0) {
+        const separatedNumbers = fullText.match(/\d[\d\s\-_.]{4,}\d/g) || [];
+        separatedNumbers.forEach(num => {
+          const cleaned = num.replace(/\D/g, '');
+          if (cleaned.length >= 6) foundIDs.add(cleaned);
+        });
+      }
+      
+      const uniqueIDs = Array.from(foundIDs).filter(id => id.length >= 6 && id.length <= 12);
       setDetectedIDs(uniqueIDs);
       
       if (uniqueIDs.length === 0) {
@@ -520,22 +543,23 @@ export const ProductImageSearch = () => {
     }
   };
 
-  const useDetectedID = useCallback((id: string) => {
+  const useDetectedID = (id: string) => {
     setProductId(id);
     stopCamera();
     toast.success(`Searching: ${id}`);
-    handleSearch(id); // Pass ID directly for instant search
-  }, [handleSearch]);
+    // Use setTimeout to ensure state updates before search
+    setTimeout(() => handleSearch(id), 50);
+  };
 
-  const handleTextSelect = useCallback((text: string) => {
+  const handleTextSelect = (text: string) => {
     const numbers = text.match(/\d+/g);
     const searchText = numbers ? numbers.join('') : text;
     
     setProductId(searchText);
     stopCamera();
     toast.success(`Searching: ${searchText}`);
-    handleSearch(searchText); // Pass text directly for instant search
-  }, [handleSearch]);
+    setTimeout(() => handleSearch(searchText), 50);
+  };
 
   useEffect(() => {
     return () => {
