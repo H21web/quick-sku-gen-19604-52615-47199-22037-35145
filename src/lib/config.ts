@@ -74,7 +74,8 @@ export const QUICK_SELECT_PRESETS = parseQuickSelect(import.meta.env.VITE_QUICK_
 // Google Custom Search API configuration
 const GOOGLE_API_KEYS = [
   'AIzaSyCUb-RrSjsScT_gfhmdyOMVp3ZHSSsai1U',
-  'AIzaSyDVvxwYZzZAOLy5Cd3FMNrQKcxZxldsJCY'
+  'AIzaSyDVvxwYZzZAOLy5Cd3FMNrQKcxZxldsJCY',
+  'AIzaSyBdRbGEG_nLOhaI1_RpNTN6kiwhEVcuxXo'
 ];
 
 export const getRandomApiKey = () => {
