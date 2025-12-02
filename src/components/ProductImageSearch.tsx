@@ -662,6 +662,12 @@ export const ProductImageSearch = () => {
                   {searchTime.toFixed(2)}s
                 </span>
               )}
+              {loadedImages.size < extractedImages.length && (
+                <span className="text-xs text-primary flex items-center gap-1.5">
+                  <span className="w-3 h-3 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+                  {loadedImages.size}/{extractedImages.length}
+                </span>
+              )}
             </div>
             {jiomartUrl && (
               <Button
