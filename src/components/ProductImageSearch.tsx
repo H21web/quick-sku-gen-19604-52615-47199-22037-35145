@@ -5,11 +5,16 @@ import { Search, X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Scan, ExternalLi
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
 import { toast } from 'sonner';
 import { extractAllProductImages } from '@/lib/imageExtractor';
-import { GOOGLE_API_KEYS, GOOGLE_SEARCH_ENGINE_ID } from '@/lib/config';
+import { GOOGLE_SEARCH_ENGINE_ID } from '@/lib/config';
 import { Skeleton } from './ui/skeleton';
 
 const OCR_SPACE_API_KEY = 'K86120042088957';
 
+const GOOGLE_API_KEYS = [
+  'AIzaSyCUb-RrSjsScT_gfhmdyOMVp3ZHSSsai1U',
+  'AIzaSyDVvxwYZzZAOLy5Cd3FMNrQKcxZxldsJCY',
+  'AIzaSyBdRbGEG_nLOhaI1_RpNTN6kiwhEVcuxXo'
+];
 
 interface ImageResult {
   imageUrl: string;
