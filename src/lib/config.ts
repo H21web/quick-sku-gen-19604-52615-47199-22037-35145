@@ -1,4 +1,3 @@
-
 export interface ConfigItem {
   id: string;
   name: string;
