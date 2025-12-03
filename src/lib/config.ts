@@ -72,7 +72,7 @@ export const QUANTITIES = parseItems(import.meta.env.VITE_QUANTITIES, DEFAULT_QU
 export const QUICK_SELECT_PRESETS = parseQuickSelect(import.meta.env.VITE_QUICK_SELECT);
 
 // Google Custom Search API configuration
-export const GOOGLE_API_KEYS = [
+const GOOGLE_API_KEYS = [
   'AIzaSyCUb-RrSjsScT_gfhmdyOMVp3ZHSSsai1U',
   'AIzaSyDVvxwYZzZAOLy5Cd3FMNrQKcxZxldsJCY',
   'AIzaSyBdRbGEG_nLOhaI1_RpNTN6kiwhEVcuxXo'
