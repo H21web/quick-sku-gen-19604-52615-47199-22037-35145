@@ -57,8 +57,6 @@ export const ProductImageSearch = () => {
   const [searchTime, setSearchTime] = useState<number | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const imageLoadQueueRef = useRef<string[]>([]);
-  const isLoadingImagesRef = useRef(false);
 
   // API Key Management State
   const [apiKeyStatuses, setApiKeyStatuses] = useState<ApiKeyStatus[]>(() =>
@@ -78,61 +76,43 @@ export const ProductImageSearch = () => {
     }
   }, []);
 
-  // Progressive image loading with queue management
+  // Progressive image loading - mark all as loaded immediately for display, then preload in background
   const progressiveImageLoader = useCallback(async (images: string[]) => {
-    if (isLoadingImagesRef.current || images.length === 0) return;
+    if (images.length === 0) return;
     
-    isLoadingImagesRef.current = true;
-    imageLoadQueueRef.current = [...images];
+    // Immediately mark first 8 images as "loaded" for instant display
+    const firstBatch = new Set(images.slice(0, 8));
+    setLoadedImages(firstBatch);
 
-    // Preload function with retry logic
+    // Preload function
     const preloadImage = (url: string): Promise<void> => {
       return new Promise((resolve) => {
         const img = new Image();
-        let retries = 3;
-
-        const attemptLoad = () => {
-          img.onload = () => {
-            setLoadedImages(prev => {
-              const newSet = new Set(prev);
-              newSet.add(url);
-              return newSet;
-            });
-            resolve();
-          };
-
-          img.onerror = () => {
-            if (retries > 0) {
-              retries--;
-              setTimeout(attemptLoad, 1000);
-            } else {
-              console.warn('Failed to load image after retries:', url);
-              resolve();
-            }
-          };
-
-          img.src = url;
+        img.onload = () => {
+          setLoadedImages(prev => new Set([...prev, url]));
+          resolve();
         };
-
-        attemptLoad();
+        img.onerror = () => {
+          // Still mark as loaded to show placeholder behavior
+          setLoadedImages(prev => new Set([...prev, url]));
+          resolve();
+        };
+        img.src = url;
       });
     };
 
-    try {
-      // Load first 8 images immediately for instant display
-      const firstBatch = images.slice(0, 8);
-      await Promise.all(firstBatch.map(preloadImage));
+    // Preload first batch immediately
+    await Promise.all(images.slice(0, 8).map(preloadImage));
 
-      // Load remaining images in batches of 8
-      const remainingImages = images.slice(8);
-      for (let i = 0; i < remainingImages.length; i += 8) {
-        const batch = remainingImages.slice(i, i + 8);
-        await Promise.all(batch.map(preloadImage));
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-    } finally {
-      isLoadingImagesRef.current = false;
-      imageLoadQueueRef.current = [];
+    // Load remaining images in parallel batches
+    const remaining = images.slice(8);
+    for (let i = 0; i < remaining.length; i += 10) {
+      const batch = remaining.slice(i, i + 10);
+      // Mark batch as loaded immediately for display
+      setLoadedImages(prev => new Set([...prev, ...batch]));
+      // Preload in background
+      Promise.all(batch.map(preloadImage));
+      await new Promise(r => setTimeout(r, 50));
     }
   }, []);
 
@@ -280,10 +260,9 @@ export const ProductImageSearch = () => {
     searchAbortControllerRef.current = new AbortController();
     const startTime = performance.now();
     setLoading(true);
-
-    // Cancel any ongoing image loading
-    isLoadingImagesRef.current = false;
-    imageLoadQueueRef.current = [];
+    
+    // Reset loaded images for fresh search
+    setLoadedImages(new Set());
 
     try {
       const query = `site:jiomart.com ${idToSearch}`;
@@ -382,20 +361,17 @@ export const ProductImageSearch = () => {
         return;
       }
 
-      // Reset state and set new images together - prevents flash of "no images"
+      // Set images and start loading immediately
       setExtractedImages(sortedImages);
-      setLoadedImages(new Set());
       setJiomartUrl(foundUrl);
+      
+      // Start progressive loading immediately - this will set loadedImages
+      progressiveImageLoader(sortedImages);
 
       // Save to history with first image as thumbnail
       const thumbnail = sortedImages[0];
       saveToHistory(idToSearch, foundUrl, thumbnail);
       toast.success(`Found ${sortedImages.length} images`);
-
-      // Start progressive image loading in background AFTER state is set
-      setTimeout(() => {
-        progressiveImageLoader(sortedImages);
-      }, 100);
 
       const endTime = performance.now();
       setSearchTime((endTime - startTime) / 1000);
