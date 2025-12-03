@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
-import { Search, X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Scan, ExternalLink, History } from 'lucide-react';
+import { Search, X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Scan, ExternalLink, History, RefreshCw } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
 import { toast } from 'sonner';
 import { extractAllProductImages } from '@/lib/imageExtractor';
@@ -10,6 +10,7 @@ import { Skeleton } from './ui/skeleton';
 
 const OCR_SPACE_API_KEY = 'K86120042088957';
 
+// ADD YOUR MULTIPLE API KEYS HERE
 const GOOGLE_API_KEYS = [
   'AIzaSyCUb-RrSjsScT_gfhmdyOMVp3ZHSSsai1U',
   'AIzaSyDVvxwYZzZAOLy5Cd3FMNrQKcxZxldsJCY',
@@ -40,6 +41,7 @@ export const ProductImageSearch = () => {
   const [extractedImages, setExtractedImages] = useState<string[]>([]);
   const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
   const [zoom, setZoom] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -65,7 +67,12 @@ export const ProductImageSearch = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   
-  // ✅ API Key rotation state
+  // ✅ New: Track processed links to avoid duplicates
+  const processedLinksRef = useRef<Set<string>>(new Set());
+  const pendingLinksRef = useRef<string[]>([]);
+  const currentSearchIdRef = useRef<string>('');
+  
+  // API Key rotation state
   const [apiKeyStatuses, setApiKeyStatuses] = useState<ApiKeyStatus[]>(() =>
     GOOGLE_API_KEYS.map(key => ({ key, exhausted: false, lastReset: Date.now() }))
   );
@@ -91,12 +98,12 @@ export const ProductImageSearch = () => {
           lastReset: Date.now()
         }))
       );
-    }, 3600000); // 1 hour
+    }, 3600000);
 
     return () => clearInterval(resetInterval);
   }, []);
 
-  // ✅ Get next available API key with rotation
+  // Get next available API key with rotation
   const getNextApiKey = useCallback((): string | null => {
     const availableKeys = apiKeyStatuses.filter(k => !k.exhausted);
     
@@ -104,14 +111,13 @@ export const ProductImageSearch = () => {
       return null;
     }
 
-    // Round-robin selection
     const key = availableKeys[currentKeyIndexRef.current % availableKeys.length];
     currentKeyIndexRef.current++;
     
     return key.key;
   }, [apiKeyStatuses]);
 
-  // ✅ Mark API key as exhausted
+  // Mark API key as exhausted
   const markApiKeyExhausted = useCallback((apiKey: string) => {
     setApiKeyStatuses(prev =>
       prev.map(status =>
@@ -122,7 +128,7 @@ export const ProductImageSearch = () => {
     );
   }, []);
 
-  // ✅ Fetch with automatic API key rotation and retry
+  // Fetch with automatic API key rotation and retry
   const fetchWithRetry = async (
     buildUrl: (apiKey: string) => string,
     maxRetries: number = GOOGLE_API_KEYS.length
@@ -145,7 +151,6 @@ export const ProductImageSearch = () => {
           return response;
         }
 
-        // Check for rate limit errors
         const errorData = await response.json().catch(() => ({}));
         const errorMessage = errorData.error?.message || '';
         
@@ -160,22 +165,19 @@ export const ProductImageSearch = () => {
           console.warn(`API key exhausted, rotating to next key...`);
           markApiKeyExhausted(apiKey);
           attempts++;
-          continue; // Try next API key
+          continue;
         }
 
-        // Non-rate-limit error, throw immediately
         throw new Error(errorMessage || `API request failed with status ${response.status}`);
         
       } catch (error: any) {
         lastError = error;
         
-        // Network errors - try next key
         if (error.message.includes('fetch') || error.message.includes('network')) {
           attempts++;
           continue;
         }
         
-        // Other errors - throw immediately
         throw error;
       }
     }
@@ -183,31 +185,37 @@ export const ProductImageSearch = () => {
     throw lastError || new Error('All API keys failed');
   };
 
-  // ✅ Optimized parallel image preloader - loads ALL images at once
-  const preloadAllImages = useCallback((images: string[]) => {
-    // Abort previous loading
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    abortControllerRef.current = new AbortController();
-    const signal = abortControllerRef.current.signal;
+  // ✅ NEW: Intersection Observer for lazy loading images
+  const imageObserverRef = useRef<IntersectionObserver | null>(null);
 
-    // Load ALL images in parallel immediately
-    images.forEach((url) => {
-      if (signal.aborted) return;
-      
-      const img = new Image();
-      img.onload = () => {
-        if (!signal.aborted) {
-          setLoadedImages(prev => new Set([...prev, url]));
-        }
-      };
-      img.onerror = () => {
-        console.warn('Failed to load:', url);
-      };
-      img.src = url;
-    });
-  }, []);
+  useEffect(() => {
+    // Create Intersection Observer for lazy loading
+    imageObserverRef.current = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            const img = entry.target as HTMLImageElement;
+            const src = img.dataset.src;
+            if (src && !loadedImages.has(src)) {
+              img.src = src;
+              img.onload = () => {
+                setLoadedImages(prev => new Set([...prev, src]));
+              };
+              imageObserverRef.current?.unobserve(img);
+            }
+          }
+        });
+      },
+      {
+        rootMargin: '50px', // Start loading 50px before image enters viewport
+        threshold: 0.01
+      }
+    );
+
+    return () => {
+      imageObserverRef.current?.disconnect();
+    };
+  }, [loadedImages]);
 
   // Save search to history
   const saveToHistory = useCallback((productId: string, jiomartUrl?: string, thumbnail?: string) => {
@@ -242,7 +250,95 @@ export const ProductImageSearch = () => {
     });
   }, []);
 
-  // ✅ FIXED: Complete rewrite with proper image extraction and API rotation
+  // ✅ NEW: Progressive image extraction function
+  const extractImagesProgressively = useCallback(async (
+    links: string[], 
+    searchId: string,
+    isInitial: boolean = true
+  ) => {
+    if (searchId !== currentSearchIdRef.current) return; // Search changed, abort
+
+    const batchSize = 3; // Process 3 links at a time
+    const newImages: string[] = [];
+
+    for (let i = 0; i < links.length; i += batchSize) {
+      if (searchId !== currentSearchIdRef.current) break; // Abort if search changed
+
+      const batch = links.slice(i, i + batchSize);
+      
+      // Process batch in parallel
+      const results = await Promise.allSettled(
+        batch.map(async (link) => {
+          if (processedLinksRef.current.has(link)) return [];
+          
+          try {
+            const images = await Promise.race([
+              extractAllProductImages(link),
+              new Promise<string[]>((_, reject) => 
+                setTimeout(() => reject(new Error('timeout')), 6000)
+              )
+            ]);
+            
+            processedLinksRef.current.add(link);
+            return Array.isArray(images) ? images : [];
+          } catch (error) {
+            console.warn(`Failed to extract from ${link}`);
+            processedLinksRef.current.add(link); // Mark as processed even if failed
+            return [];
+          }
+        })
+      );
+
+      // Collect successful results
+      results.forEach((result) => {
+        if (result.status === 'fulfilled' && result.value.length > 0) {
+          newImages.push(...result.value);
+        }
+      });
+
+      // Update images after each batch
+      if (newImages.length > 0 && searchId === currentSearchIdRef.current) {
+        setExtractedImages(prev => {
+          const combined = [...prev, ...newImages];
+          const unique = Array.from(new Set(combined));
+          
+          // Sort: original images first
+          return [
+            ...unique.filter(url => url.includes('/original/')),
+            ...unique.filter(url => !url.includes('/original/'))
+          ];
+        });
+        newImages.length = 0; // Clear for next batch
+      }
+
+      // Small delay between batches
+      if (i + batchSize < links.length) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
+  }, []);
+
+  // ✅ NEW: Load more images from pending links
+  const loadMoreImages = useCallback(async () => {
+    if (isLoadingMore || pendingLinksRef.current.length === 0) return;
+
+    setIsLoadingMore(true);
+    const remainingLinks = pendingLinksRef.current.filter(
+      link => !processedLinksRef.current.has(link)
+    );
+
+    if (remainingLinks.length > 0) {
+      await extractImagesProgressively(
+        remainingLinks.slice(0, 5), // Process 5 more links
+        currentSearchIdRef.current,
+        false
+      );
+    }
+
+    setIsLoadingMore(false);
+  }, [isLoadingMore, extractImagesProgressively]);
+
+  // ✅ IMPROVED: Main search handler with progressive loading
   const handleSearch = useCallback(async (searchId?: string) => {
     const idToSearch = searchId || productId;
     
@@ -261,19 +357,25 @@ export const ProductImageSearch = () => {
       abortControllerRef.current.abort();
     }
 
+    // Generate unique search ID
+    const newSearchId = `${idToSearch}_${Date.now()}`;
+    currentSearchIdRef.current = newSearchId;
+
     const startTime = performance.now();
     setLoading(true);
     
-    // Clear previous results IMMEDIATELY
+    // Clear previous results
     setExtractedImages([]);
     setLoadedImages(new Set());
     setJiomartUrl('');
     setSearchTime(null);
+    processedLinksRef.current.clear();
+    pendingLinksRef.current = [];
     
     try {
       const query = `site:jiomart.com ${idToSearch}`;
       
-      // ✅ Parallel API calls with automatic retry and key rotation
+      // Parallel API calls with automatic retry
       const [imageResponse, webResponse] = await Promise.all([
         fetchWithRetry((apiKey) =>
           `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&searchType=image&num=10&fields=items(link)`
@@ -292,11 +394,11 @@ export const ProductImageSearch = () => {
       let foundUrl = '';
       if (webData.items?.[0]?.link?.includes('jiomart.com')) {
         foundUrl = webData.items[0].link;
+        setJiomartUrl(foundUrl);
       }
       
       if (!imageData.items?.length) {
         toast.error('No images found');
-        setJiomartUrl(foundUrl);
         saveToHistory(idToSearch, foundUrl);
         setSearchTime((performance.now() - startTime) / 1000);
         return;
@@ -307,82 +409,49 @@ export const ProductImageSearch = () => {
         imageData.items
           .map((item: any) => item.link)
           .filter((url: string) => url.includes('jiomart.com/images/product'))
-      ));
+      )) as string[];
 
       if (!jiomartLinks.length) {
         toast.error('No product images found');
-        setJiomartUrl(foundUrl);
         saveToHistory(idToSearch, foundUrl);
         setSearchTime((performance.now() - startTime) / 1000);
         return;
       }
 
-      // ✅ FIXED: Extract ALL images from ALL links in parallel with proper error handling
-      const extractImageFromLink = async (url: string): Promise<string[]> => {
-        try {
-          const result = await Promise.race([
-            extractAllProductImages(url),
-            new Promise<never>((_, reject) => 
-              setTimeout(() => reject(new Error('timeout')), 5000)
-            )
-          ]);
-          return Array.isArray(result) ? result : [];
-        } catch (error) {
-          console.warn(`Failed to extract images from ${url}:`, error);
-          return [];
+      // Store all links for progressive loading
+      pendingLinksRef.current = [...jiomartLinks];
+
+      // ✅ Start progressive extraction - first batch loads immediately
+      const firstBatch = jiomartLinks.slice(0, 5);
+      const remainingLinks = jiomartLinks.slice(5);
+      
+      // Extract first batch immediately
+      await extractImagesProgressively(firstBatch, newSearchId, true);
+
+      // Continue with remaining links in background
+      if (remainingLinks.length > 0 && newSearchId === currentSearchIdRef.current) {
+        setTimeout(() => {
+          extractImagesProgressively(remainingLinks, newSearchId, false);
+        }, 500);
+      }
+
+      const endTime = performance.now();
+      setSearchTime((endTime - startTime) / 1000);
+
+      // Save to history after first batch
+      setTimeout(() => {
+        if (extractedImages.length > 0) {
+          saveToHistory(idToSearch, foundUrl, extractedImages[0]);
+        } else {
+          saveToHistory(idToSearch, foundUrl);
         }
-      };
+      }, 1000);
 
-      // Extract from ALL links in parallel
-      const allImageArrays = await Promise.all(
-        jiomartLinks.map(link => extractImageFromLink(link as string))
-      );
-
-      // Flatten all results
-      const allImages = allImageArrays.flat();
-
-      if (!allImages.length) {
-        toast.error('No product images found');
-        setJiomartUrl(foundUrl);
-        saveToHistory(idToSearch, foundUrl);
-        setSearchTime((performance.now() - startTime) / 1000);
-        return;
-      }
-
-      // Filter unique images
-      const uniqueImages = Array.from(new Set(allImages));
-      
-      // Sort: original images first, then others
-      const sortedImages = [
-        ...uniqueImages.filter(url => url.includes('/original/')),
-        ...uniqueImages.filter(url => !url.includes('/original/'))
-      ];
-      
-      if (!sortedImages.length) {
-        toast.error('No images found');
-        setJiomartUrl(foundUrl);
-        saveToHistory(idToSearch, foundUrl);
-        setSearchTime((performance.now() - startTime) / 1000);
-        return;
-      }
-
-      // ✅ Set images AND start loading TOGETHER
-      setExtractedImages(sortedImages);
-      setJiomartUrl(foundUrl);
-      
-      // Start parallel image loading immediately
-      preloadAllImages(sortedImages);
-      
-      // Save to history
-      saveToHistory(idToSearch, foundUrl, sortedImages[0]);
-      
-      toast.success(`Found ${sortedImages.length} images`);
-      setSearchTime((performance.now() - startTime) / 1000);
+      toast.success('Loading images...');
       
     } catch (error: any) {
       console.error('Search error:', error);
       
-      // Only show error if ALL API keys failed
       if (error.message.includes('exhausted')) {
         toast.error('All API keys exhausted. Please try again in an hour.');
       } else {
@@ -393,7 +462,7 @@ export const ProductImageSearch = () => {
     } finally {
       setLoading(false);
     }
-  }, [productId, saveToHistory, preloadAllImages, getNextApiKey, markApiKeyExhausted, fetchWithRetry]);
+  }, [productId, saveToHistory, extractImagesProgressively, getNextApiKey, markApiKeyExhausted, fetchWithRetry, extractedImages]);
 
   const openImage = (index: number) => {
     setSelectedImageIndex(index);
@@ -625,7 +694,7 @@ export const ProductImageSearch = () => {
     startCamera();
   };
 
-  // Optimized OCR with reduced image size
+  // Optimized OCR
   const extractTextFromImage = async (imageData: string) => {
     setIsProcessingOCR(true);
     
@@ -693,7 +762,6 @@ export const ProductImageSearch = () => {
       
       setSelectableTexts(selectable);
       
-      // ID extraction
       const foundIDs = new Set<string>();
       const fullText = extractedText.replace(/\n/g, ' ');
       
@@ -768,6 +836,7 @@ export const ProductImageSearch = () => {
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
+      imageObserverRef.current?.disconnect();
     };
   }, [cameraStream]);
 
@@ -797,11 +866,6 @@ export const ProductImageSearch = () => {
         </Button>
       </div>
 
-      {/* API Key Status Indicator */}
-      <div className="text-xs text-muted-foreground">
-        Active Keys: {apiKeyStatuses.filter(k => !k.exhausted).length}/{GOOGLE_API_KEYS.length}
-      </div>
-
       {/* Loading Skeletons */}
       {loading && (
         <div className="space-y-3">
@@ -814,7 +878,7 @@ export const ProductImageSearch = () => {
         </div>
       )}
 
-      {/* Images show immediately with loading indicators */}
+      {/* ✅ Images with lazy loading and dynamic refresh */}
       {extractedImages.length > 0 && (
         <div className="space-y-3">
           <div className="flex items-center justify-between flex-wrap gap-2">
@@ -825,24 +889,39 @@ export const ProductImageSearch = () => {
                   {searchTime.toFixed(2)}s
                 </span>
               )}
-              {loadedImages.size < extractedImages.length && (
+              {(loading || isLoadingMore) && (
                 <span className="text-xs text-primary flex items-center gap-1.5">
                   <span className="w-3 h-3 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
-                  {loadedImages.size}/{extractedImages.length}
+                  Loading...
                 </span>
               )}
             </div>
-            {jiomartUrl && (
-              <Button
-                variant="default"
-                size="sm"
-                onClick={() => window.open(jiomartUrl, '_blank')}
-                className="gap-2"
-              >
-                <ExternalLink className="w-4 h-4" />
-                Open Product
-              </Button>
-            )}
+            <div className="flex gap-2">
+              {/* ✅ Load More Button */}
+              {pendingLinksRef.current.length > processedLinksRef.current.size && !loading && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={loadMoreImages}
+                  disabled={isLoadingMore}
+                  className="gap-2"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isLoadingMore ? 'animate-spin' : ''}`} />
+                  Load More
+                </Button>
+              )}
+              {jiomartUrl && (
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={() => window.open(jiomartUrl, '_blank')}
+                  className="gap-2"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  Open Product
+                </Button>
+              )}
+            </div>
           </div>
           
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
@@ -850,7 +929,7 @@ export const ProductImageSearch = () => {
               const isLoaded = loadedImages.has(url);
               return (
                 <div
-                  key={url}
+                  key={`${url}-${index}`}
                   className="relative aspect-square rounded-lg border border-border hover:border-primary transition-all duration-200 overflow-hidden cursor-pointer group bg-muted/50"
                   onClick={() => openImage(index)}
                 >
@@ -858,23 +937,38 @@ export const ProductImageSearch = () => {
                     <div className="absolute inset-0 bg-muted animate-pulse" />
                   )}
                   
+                  {/* ✅ Lazy loading with Intersection Observer */}
                   <img
-                    src={url}
+                    data-src={url}
+                    src={index < 4 ? url : undefined} // Load first 4 immediately
                     alt={`Product ${index + 1}`}
                     className={`w-full h-full object-cover transition-all duration-300 group-hover:scale-105 ${
                       isLoaded ? 'opacity-100' : 'opacity-0'
                     }`}
-                    loading={index < 4 ? 'eager' : 'lazy'}
+                    loading="lazy"
                     decoding="async"
+                    ref={(el) => {
+                      if (el && index >= 4 && !el.src) {
+                        imageObserverRef.current?.observe(el);
+                      }
+                    }}
                   />
                 </div>
               );
             })}
           </div>
+
+          {/* Progress indicator */}
+          {pendingLinksRef.current.length > 0 && (
+            <div className="text-xs text-center text-muted-foreground">
+              Processed {processedLinksRef.current.size} of {pendingLinksRef.current.length} sources
+            </div>
+          )}
         </div>
       )}
 
-      {/* Image Viewer Dialog - Same as before */}
+      {/* Rest of the dialogs remain the same... */}
+      {/* Image Viewer Dialog */}
       <Dialog open={selectedImageIndex !== null} onOpenChange={(open) => !open && closeImage()}>
         <DialogContent className="max-w-full max-h-full w-screen h-screen p-0 bg-background/95 backdrop-blur border-0">
           <div className="sr-only">
