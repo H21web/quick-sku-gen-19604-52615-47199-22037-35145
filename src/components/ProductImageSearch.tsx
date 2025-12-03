@@ -5,10 +5,11 @@ import { Search, X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Scan, ExternalLi
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
 import { toast } from 'sonner';
 import { extractAllProductImages } from '@/lib/imageExtractor';
-import { getRandomApiKey, GOOGLE_SEARCH_ENGINE_ID } from '@/lib/config';
+import { GOOGLE_API_KEYS, GOOGLE_SEARCH_ENGINE_ID } from '@/lib/config';
 import { Skeleton } from './ui/skeleton';
 
 const OCR_SPACE_API_KEY = 'K86120042088957';
+
 
 interface ImageResult {
   imageUrl: string;
@@ -21,6 +22,12 @@ interface SearchHistoryItem {
   timestamp: number;
   jiomartUrl?: string;
   thumbnail?: string;
+}
+
+interface ApiKeyStatus {
+  key: string;
+  exhausted: boolean;
+  lastReset: number;
 }
 
 export const ProductImageSearch = () => {
@@ -52,6 +59,12 @@ export const ProductImageSearch = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  
+  // ✅ API Key rotation state
+  const [apiKeyStatuses, setApiKeyStatuses] = useState<ApiKeyStatus[]>(() =>
+    GOOGLE_API_KEYS.map(key => ({ key, exhausted: false, lastReset: Date.now() }))
+  );
+  const currentKeyIndexRef = useRef(0);
 
   // Load search history from localStorage
   useEffect(() => {
@@ -63,9 +76,109 @@ export const ProductImageSearch = () => {
         localStorage.removeItem('searchHistory');
       }
     }
+
+    // Reset exhausted API keys every hour
+    const resetInterval = setInterval(() => {
+      setApiKeyStatuses(prev => 
+        prev.map(status => ({
+          ...status,
+          exhausted: false,
+          lastReset: Date.now()
+        }))
+      );
+    }, 3600000); // 1 hour
+
+    return () => clearInterval(resetInterval);
   }, []);
 
-  // ✅ FIXED: Optimized parallel image preloader - loads ALL images at once
+  // ✅ Get next available API key with rotation
+  const getNextApiKey = useCallback((): string | null => {
+    const availableKeys = apiKeyStatuses.filter(k => !k.exhausted);
+    
+    if (availableKeys.length === 0) {
+      return null;
+    }
+
+    // Round-robin selection
+    const key = availableKeys[currentKeyIndexRef.current % availableKeys.length];
+    currentKeyIndexRef.current++;
+    
+    return key.key;
+  }, [apiKeyStatuses]);
+
+  // ✅ Mark API key as exhausted
+  const markApiKeyExhausted = useCallback((apiKey: string) => {
+    setApiKeyStatuses(prev =>
+      prev.map(status =>
+        status.key === apiKey
+          ? { ...status, exhausted: true }
+          : status
+      )
+    );
+  }, []);
+
+  // ✅ Fetch with automatic API key rotation and retry
+  const fetchWithRetry = async (
+    buildUrl: (apiKey: string) => string,
+    maxRetries: number = GOOGLE_API_KEYS.length
+  ): Promise<Response> => {
+    let attempts = 0;
+    let lastError: Error | null = null;
+
+    while (attempts < maxRetries) {
+      const apiKey = getNextApiKey();
+      
+      if (!apiKey) {
+        throw new Error('All API keys exhausted. Please try again later.');
+      }
+
+      try {
+        const url = buildUrl(apiKey);
+        const response = await fetch(url);
+
+        if (response.ok) {
+          return response;
+        }
+
+        // Check for rate limit errors
+        const errorData = await response.json().catch(() => ({}));
+        const errorMessage = errorData.error?.message || '';
+        
+        const isRateLimitError = 
+          response.status === 429 ||
+          errorMessage.toLowerCase().includes('quota') ||
+          errorMessage.toLowerCase().includes('limit') ||
+          errorMessage.toLowerCase().includes('ratelimitexceeded') ||
+          errorData.error?.code === 429;
+
+        if (isRateLimitError) {
+          console.warn(`API key exhausted, rotating to next key...`);
+          markApiKeyExhausted(apiKey);
+          attempts++;
+          continue; // Try next API key
+        }
+
+        // Non-rate-limit error, throw immediately
+        throw new Error(errorMessage || `API request failed with status ${response.status}`);
+        
+      } catch (error: any) {
+        lastError = error;
+        
+        // Network errors - try next key
+        if (error.message.includes('fetch') || error.message.includes('network')) {
+          attempts++;
+          continue;
+        }
+        
+        // Other errors - throw immediately
+        throw error;
+      }
+    }
+
+    throw lastError || new Error('All API keys failed');
+  };
+
+  // ✅ Optimized parallel image preloader - loads ALL images at once
   const preloadAllImages = useCallback((images: string[]) => {
     // Abort previous loading
     if (abortControllerRef.current) {
@@ -124,7 +237,7 @@ export const ProductImageSearch = () => {
     });
   }, []);
 
-  // ✅ FIXED: Completely rewritten search handler with instant display
+  // ✅ FIXED: Complete rewrite with proper image extraction and API rotation
   const handleSearch = useCallback(async (searchId?: string) => {
     const idToSearch = searchId || productId;
     
@@ -146,26 +259,24 @@ export const ProductImageSearch = () => {
     const startTime = performance.now();
     setLoading(true);
     
-    // ✅ FIXED: Clear previous results IMMEDIATELY before search starts
+    // Clear previous results IMMEDIATELY
     setExtractedImages([]);
     setLoadedImages(new Set());
     setJiomartUrl('');
     setSearchTime(null);
     
     try {
-      const apiKey = getRandomApiKey();
       const query = `site:jiomart.com ${idToSearch}`;
       
-      // Parallel API calls
+      // ✅ Parallel API calls with automatic retry and key rotation
       const [imageResponse, webResponse] = await Promise.all([
-        fetch(`https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&searchType=image&num=10&fields=items(link)`),
-        fetch(`https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&num=1&fields=items(link)`)
+        fetchWithRetry((apiKey) =>
+          `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&searchType=image&num=10&fields=items(link)`
+        ),
+        fetchWithRetry((apiKey) =>
+          `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&num=1&fields=items(link)`
+        )
       ]);
-
-      if (!imageResponse.ok) {
-        const errorData = await imageResponse.json().catch(() => ({}));
-        throw new Error(errorData.error?.message || 'Failed to fetch images');
-      }
 
       const [imageData, webData] = await Promise.all([
         imageResponse.json(),
@@ -201,18 +312,37 @@ export const ProductImageSearch = () => {
         return;
       }
 
-      // ✅ OPTIMIZED: Extract ALL images in parallel with timeout
-      const allImagePromises = jiomartLinks.map((url: string) => 
-        Promise.race([
-          extractAllProductImages(url),
-          new Promise<string[]>((_, reject) => 
-            setTimeout(() => reject(new Error('timeout')), 4000)
-          )
-        ]).catch(() => [] as string[])
+      // ✅ FIXED: Extract ALL images from ALL links in parallel with proper error handling
+      const extractImageFromLink = async (url: string): Promise<string[]> => {
+        try {
+          const result = await Promise.race([
+            extractAllProductImages(url),
+            new Promise<never>((_, reject) => 
+              setTimeout(() => reject(new Error('timeout')), 5000)
+            )
+          ]);
+          return Array.isArray(result) ? result : [];
+        } catch (error) {
+          console.warn(`Failed to extract images from ${url}:`, error);
+          return [];
+        }
+      };
+
+      // Extract from ALL links in parallel
+      const allImageArrays = await Promise.all(
+        jiomartLinks.map(link => extractImageFromLink(link as string))
       );
-      
-      const allImageResults = await Promise.all(allImagePromises);
-      const allImages = allImageResults.flat();
+
+      // Flatten all results
+      const allImages = allImageArrays.flat();
+
+      if (!allImages.length) {
+        toast.error('No product images found');
+        setJiomartUrl(foundUrl);
+        saveToHistory(idToSearch, foundUrl);
+        setSearchTime((performance.now() - startTime) / 1000);
+        return;
+      }
 
       // Filter unique images
       const uniqueImages = Array.from(new Set(allImages));
@@ -231,7 +361,7 @@ export const ProductImageSearch = () => {
         return;
       }
 
-      // ✅ FIXED: Set images AND start loading TOGETHER
+      // ✅ Set images AND start loading TOGETHER
       setExtractedImages(sortedImages);
       setJiomartUrl(foundUrl);
       
@@ -246,12 +376,19 @@ export const ProductImageSearch = () => {
       
     } catch (error: any) {
       console.error('Search error:', error);
-      toast.error(error.message || 'Search failed. Try again.');
+      
+      // Only show error if ALL API keys failed
+      if (error.message.includes('exhausted')) {
+        toast.error('All API keys exhausted. Please try again in an hour.');
+      } else {
+        toast.error(error.message || 'Search failed. Try again.');
+      }
+      
       setSearchTime((performance.now() - startTime) / 1000);
     } finally {
       setLoading(false);
     }
-  }, [productId, saveToHistory, preloadAllImages]);
+  }, [productId, saveToHistory, preloadAllImages, getNextApiKey, markApiKeyExhausted, fetchWithRetry]);
 
   const openImage = (index: number) => {
     setSelectedImageIndex(index);
@@ -483,7 +620,7 @@ export const ProductImageSearch = () => {
     startCamera();
   };
 
-  // ✅ OPTIMIZED: Faster OCR with reduced image size
+  // Optimized OCR with reduced image size
   const extractTextFromImage = async (imageData: string) => {
     setIsProcessingOCR(true);
     
@@ -493,8 +630,7 @@ export const ProductImageSearch = () => {
       await new Promise((resolve) => { img.onload = resolve; });
       
       const canvas = document.createElement('canvas');
-      // ✅ OPTIMIZED: Reduced size for faster processing
-      const maxDimension = 800; // Reduced from 1200
+      const maxDimension = 800;
       let width = img.width;
       let height = img.height;
       
@@ -514,7 +650,6 @@ export const ProductImageSearch = () => {
         ctx.drawImage(img, 0, 0, width, height);
       }
       
-      // ✅ OPTIMIZED: Lower quality for faster upload
       const compressedImage = canvas.toDataURL('image/jpeg', 0.7);
 
       const formData = new FormData();
@@ -657,6 +792,11 @@ export const ProductImageSearch = () => {
         </Button>
       </div>
 
+      {/* API Key Status Indicator */}
+      <div className="text-xs text-muted-foreground">
+        Active Keys: {apiKeyStatuses.filter(k => !k.exhausted).length}/{GOOGLE_API_KEYS.length}
+      </div>
+
       {/* Loading Skeletons */}
       {loading && (
         <div className="space-y-3">
@@ -669,7 +809,7 @@ export const ProductImageSearch = () => {
         </div>
       )}
 
-      {/* ✅ FIXED: Images show immediately with loading indicators */}
+      {/* Images show immediately with loading indicators */}
       {extractedImages.length > 0 && (
         <div className="space-y-3">
           <div className="flex items-center justify-between flex-wrap gap-2">
@@ -709,7 +849,6 @@ export const ProductImageSearch = () => {
                   className="relative aspect-square rounded-lg border border-border hover:border-primary transition-all duration-200 overflow-hidden cursor-pointer group bg-muted/50"
                   onClick={() => openImage(index)}
                 >
-                  {/* Show skeleton until loaded */}
                   {!isLoaded && (
                     <div className="absolute inset-0 bg-muted animate-pulse" />
                   )}
@@ -730,7 +869,7 @@ export const ProductImageSearch = () => {
         </div>
       )}
 
-      {/* Image Viewer Dialog */}
+      {/* Image Viewer Dialog - Same as before */}
       <Dialog open={selectedImageIndex !== null} onOpenChange={(open) => !open && closeImage()}>
         <DialogContent className="max-w-full max-h-full w-screen h-screen p-0 bg-background/95 backdrop-blur border-0">
           <div className="sr-only">
@@ -832,7 +971,7 @@ export const ProductImageSearch = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Camera Dialog */}
+      {/* Camera Dialog - Same as before */}
       <Dialog open={showCameraDialog} onOpenChange={(open) => !open && stopCamera()}>
         <DialogContent className="max-w-full max-h-full w-screen h-screen p-0 bg-black">
           <div className="sr-only">
