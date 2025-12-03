@@ -32,7 +32,7 @@ interface ApiKeyStatus {
 export const ProductImageSearch = () => {
   const [productId, setProductId] = useState('');
   const [extractedImages, setExtractedImages] = useState<string[]>([]);
-  const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set());
+  const [loadedImages, setLoadedImages] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(false);
   const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
   const [zoom, setZoom] = useState(1);
@@ -76,45 +76,13 @@ export const ProductImageSearch = () => {
     }
   }, []);
 
-  // Progressive image loading - mark all as loaded immediately for display, then preload in background
-  const progressiveImageLoader = useCallback(async (images: string[]) => {
-    if (images.length === 0) return;
-    
-    // Immediately mark first 8 images as "loaded" for instant display
-    const firstBatch = new Set(images.slice(0, 8));
-    setLoadedImages(firstBatch);
-
-    // Preload function
-    const preloadImage = (url: string): Promise<void> => {
-      return new Promise((resolve) => {
-        const img = new Image();
-        img.onload = () => {
-          setLoadedImages(prev => new Set([...prev, url]));
-          resolve();
-        };
-        img.onerror = () => {
-          // Still mark as loaded to show placeholder behavior
-          setLoadedImages(prev => new Set([...prev, url]));
-          resolve();
-        };
-        img.src = url;
-      });
-    };
-
-    // Preload first batch immediately
-    await Promise.all(images.slice(0, 8).map(preloadImage));
-
-    // Load remaining images in parallel batches
-    const remaining = images.slice(8);
-    for (let i = 0; i < remaining.length; i += 10) {
-      const batch = remaining.slice(i, i + 10);
-      // Mark batch as loaded immediately for display
-      setLoadedImages(prev => new Set([...prev, ...batch]));
-      // Preload in background
-      Promise.all(batch.map(preloadImage));
-      await new Promise(r => setTimeout(r, 50));
-    }
+  // Simple image load handler - mark as loaded when browser finishes loading
+  const handleImageLoad = useCallback((url: string) => {
+    setLoadedImages(prev => ({ ...prev, [url]: true }));
   }, []);
+
+  // Get loaded count for progress indicator
+  const loadedCount = Object.values(loadedImages).filter(Boolean).length;
 
   // Save search to history with thumbnail caching and deduplication
   const saveToHistory = useCallback((productId: string, jiomartUrl?: string, thumbnail?: string) => {
@@ -262,7 +230,7 @@ export const ProductImageSearch = () => {
     setLoading(true);
     
     // Reset loaded images for fresh search
-    setLoadedImages(new Set());
+    setLoadedImages({});
 
     try {
       const query = `site:jiomart.com ${idToSearch}`;
@@ -291,7 +259,7 @@ export const ProductImageSearch = () => {
       if (!imageData.items?.length) {
         // Reset state ONLY when no images found
         setExtractedImages([]);
-        setLoadedImages(new Set());
+    setLoadedImages({});
         setJiomartUrl(foundUrl);
         setSearchTime(null);
         toast.error('No images found');
@@ -309,7 +277,7 @@ export const ProductImageSearch = () => {
       if (!jiomartLinks.length) {
         // Reset state ONLY when no product images found
         setExtractedImages([]);
-        setLoadedImages(new Set());
+        setLoadedImages({});
         setJiomartUrl(foundUrl);
         setSearchTime(null);
         toast.error('No product images found');
@@ -353,7 +321,7 @@ export const ProductImageSearch = () => {
       if (!sortedImages.length) {
         // Reset state ONLY when no sorted images found
         setExtractedImages([]);
-        setLoadedImages(new Set());
+        setLoadedImages({});
         setJiomartUrl(foundUrl);
         setSearchTime(null);
         toast.error('No images found');
@@ -365,8 +333,8 @@ export const ProductImageSearch = () => {
       setExtractedImages(sortedImages);
       setJiomartUrl(foundUrl);
       
-      // Start progressive loading immediately - this will set loadedImages
-      progressiveImageLoader(sortedImages);
+      // Reset loaded state for new images
+      setLoadedImages({});
 
       // Save to history with first image as thumbnail
       const thumbnail = sortedImages[0];
@@ -379,8 +347,8 @@ export const ProductImageSearch = () => {
     } catch (error: any) {
       console.error('Search error:', error);
       // Reset state on error
-      setExtractedImages([]);
-      setLoadedImages(new Set());
+        setExtractedImages([]);
+        setLoadedImages({});
       setJiomartUrl('');
       setSearchTime(null);
       
@@ -396,7 +364,7 @@ export const ProductImageSearch = () => {
       setLoading(false);
       searchAbortControllerRef.current = null;
     }
-  }, [productId, saveToHistory, progressiveImageLoader, getNextApiKey, markApiKeyExhausted, updateApiKeyUsed, fetchWithApiKeyRotation]);
+  }, [productId, saveToHistory, getNextApiKey, markApiKeyExhausted, updateApiKeyUsed, fetchWithApiKeyRotation]);
 
   const openImage = (index: number) => {
     setSelectedImageIndex(index);
@@ -822,9 +790,9 @@ export const ProductImageSearch = () => {
                   {searchTime.toFixed(2)}s
                 </span>
               )}
-              {loadedImages.size < extractedImages.length && (
+              {loadedCount < extractedImages.length && (
                 <span className="text-sm text-purple-600">
-                  {loadedImages.size}/{extractedImages.length}
+                  {loadedCount}/{extractedImages.length}
                 </span>
               )}
               {jiomartUrl && (
@@ -842,7 +810,7 @@ export const ProductImageSearch = () => {
 
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
               {extractedImages.map((url, index) => {
-                const isLoaded = loadedImages.has(url);
+                const isLoaded = loadedImages[url];
                 return (
                   <div
                     key={index}
@@ -855,7 +823,8 @@ export const ProductImageSearch = () => {
                       className={`w-full h-full object-cover transition-opacity duration-300 ${
                         isLoaded ? 'opacity-100' : 'opacity-0'
                       }`}
-                      loading="lazy"
+                      loading="eager"
+                      onLoad={() => handleImageLoad(url)}
                     />
                     {!isLoaded && (
                       <Skeleton className="absolute inset-0" />
