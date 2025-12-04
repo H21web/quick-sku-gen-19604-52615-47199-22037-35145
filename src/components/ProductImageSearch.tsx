@@ -30,6 +30,7 @@ interface SearchHistoryItem {
   productId: string;
   timestamp: number;
   jiomartUrl?: string;
+  thumbnail?: string;
 }
 
 interface ApiKeyStatus {
@@ -79,6 +80,9 @@ export const ProductImageSearch = () => {
     GOOGLE_API_KEYS.map(key => ({ key, exhausted: false, lastReset: Date.now() }))
   );
   const currentKeyIndexRef = useRef(0);
+
+  // Mobile detection for optimized loading
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
   // Load search history from localStorage
   useEffect(() => {
@@ -188,13 +192,14 @@ export const ProductImageSearch = () => {
   };
 
   // Save search to history
-  const saveToHistory = useCallback((productId: string, jiomartUrl?: string) => {
+  const saveToHistory = useCallback((productId: string, jiomartUrl?: string, thumbnail?: string) => {
     setSearchHistory((prevHistory) => {
       const newHistoryItem: SearchHistoryItem = {
         id: Date.now().toString(),
         productId,
         timestamp: Date.now(),
-        jiomartUrl
+        jiomartUrl,
+        thumbnail
       };
       
       const updatedHistory = [newHistoryItem, ...prevHistory].slice(0, 20);
@@ -214,7 +219,7 @@ export const ProductImageSearch = () => {
     
     for (let i = 0; i < links.length; i += batchSize) {
       if (searchId !== currentSearchIdRef.current) break;
-
+      
       const batch = links.slice(i, i + batchSize);
       
       const results = await Promise.allSettled(
@@ -339,6 +344,20 @@ export const ProductImageSearch = () => {
       
       saveToHistory(idToSearch, foundUrl);
       
+      // Update history with first image after extraction
+      if (imageData.items?.length > 0) {
+        setTimeout(() => {
+          if (extractedImages.length > 0) {
+            const updatedHistory = JSON.parse(localStorage.getItem('searchHistory') || '[]');
+            if (updatedHistory[0]?.productId === idToSearch && !updatedHistory[0].thumbnail) {
+              updatedHistory[0].thumbnail = extractedImages[0];
+              localStorage.setItem('searchHistory', JSON.stringify(updatedHistory));
+              setSearchHistory(updatedHistory);
+            }
+          }
+        }, 2000);
+      }
+      
       if (!imageData.items?.length) {
         toast.error('No images found');
         setSearchTime((performance.now() - startTime) / 1000);
@@ -389,7 +408,7 @@ export const ProductImageSearch = () => {
     } finally {
       setLoading(false);
     }
-  }, [productId, saveToHistory, extractImagesProgressively, getNextApiKey, markApiKeyExhausted, fetchWithRetry]);
+  }, [productId, saveToHistory, extractImagesProgressively, getNextApiKey, markApiKeyExhausted, fetchWithRetry, extractedImages]);
 
   const openImage = (index: number) => {
     setSelectedImageIndex(index);
@@ -676,13 +695,8 @@ export const ProductImageSearch = () => {
       const extractedText = result.ParsedResults?.[0]?.ParsedText || '';
       setExtractedText(extractedText);
       
-      const words = extractedText.split(/\s+/).filter(w => w.trim());
-      const selectable = words.map((word) => ({
-        text: word.trim(),
-        isNumber: /\d{6,}/.test(word) || /\d/.test(word)
-      }));
-      
-      setSelectableTexts(selectable);
+      // Only keep product IDs as selectable (no other keywords)
+      // setSelectableTexts removed to hide unwanted keywords
       
       const foundIDs = new Set<string>();
       const fullText = extractedText.replace(/\n/g, ' ');
@@ -707,7 +721,7 @@ export const ProductImageSearch = () => {
       }
       
       if (foundIDs.size === 0) {
-        const numberMatches = [...fullText.matchAll(/\b(\d{6,12})\b/g), ...cleanedText.matchAll(/\b(\d{6,12})\b/g)];
+        const numberMatches = [...fullText.matchAll(/\b(\d{6,12})\b/g)];
         numberMatches.forEach(m => m[1] && foundIDs.add(m[1]));
       }
       
@@ -722,10 +736,13 @@ export const ProductImageSearch = () => {
       const uniqueIDs = Array.from(foundIDs).filter(id => id.length >= 6 && id.length <= 12);
       setDetectedIDs(uniqueIDs);
       
+      // Only set product IDs as selectable
+      setSelectableTexts(uniqueIDs.map(id => ({ text: id, isNumber: true })));
+      
       if (uniqueIDs.length === 0) {
-        toast.info('No IDs detected. Tap any text.');
+        toast.info('No product IDs detected');
       } else {
-        toast.success(`Found ${uniqueIDs.length} ID(s)`);
+        toast.success(`Found ${uniqueIDs.length} product ID(s)`);
       }
     } catch (error: any) {
       console.error('OCR error:', error);
@@ -760,6 +777,16 @@ export const ProductImageSearch = () => {
     };
   }, [cameraStream]);
 
+  // Preload first images for faster display
+  useEffect(() => {
+    if (extractedImages.length > 0) {
+      extractedImages.slice(0, 6).forEach((url) => {
+        const img = new Image();
+        img.src = url;
+      });
+    }
+  }, [extractedImages]);
+
   return (
     <div className="space-y-4">
       {/* Search Section */}
@@ -779,6 +806,14 @@ export const ProductImageSearch = () => {
           title="Scan text from camera"
         >
           <Scan className="w-4 h-4" />
+        </Button>
+        <Button 
+          variant="outline" 
+          size="icon" 
+          onClick={() => setShowHistoryDialog(true)} 
+          title="Search history"
+        >
+          <History className="w-4 h-4" />
         </Button>
         <Button onClick={() => handleSearch()} disabled={loading}>
           <Search className="w-4 h-4 mr-2" />
@@ -861,9 +896,16 @@ export const ProductImageSearch = () => {
                   src={url}
                   alt={`Product ${index + 1}`}
                   className="w-full h-auto object-cover transition-transform duration-300 ease-out group-hover:scale-[1.02] group-hover:opacity-95"
-                  loading="eager"
+                  loading={index < 4 ? "eager" : "lazy"}
                   decoding="async"
+                  fetchPriority={index < 2 ? "high" : "auto"}
                   onLoad={() => setLoadedImages(prev => new Set([...prev, url]))}
+                  onError={(e) => {
+                    const target = e.currentTarget;
+                    if (isMobile && !url.includes('/original/')) {
+                      target.src = url.replace(/\/(small|medium|large)\//, '/original/');
+                    }
+                  }}
                 />
               </div>
             ))}
@@ -1007,7 +1049,7 @@ export const ProductImageSearch = () => {
                   muted
                   className="w-full h-full object-cover"
                 />
-                <canvas ref={canvasRef} className="hidden" />
+                nvas ref={canvasRef} className="hiddenn" />
                 
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                   <div className="relative w-[85%] max-w-md aspect-[3/2] border-2 border-primary/60 rounded-lg">
@@ -1050,54 +1092,33 @@ export const ProductImageSearch = () => {
                     </div>
                   )}
 
-                  {!isProcessingOCR && selectableTexts.length > 0 && (
+                  {!isProcessingOCR && detectedIDs.length > 0 && (
                     <div className="absolute inset-0 p-4 overflow-auto pointer-events-none">
                       <div className="max-w-2xl mx-auto pointer-events-auto">
-                        {detectedIDs.length > 0 && (
-                          <div className="mb-4 space-y-2">
-                            <div className="text-xs text-white/70 font-medium mb-1 px-2">Product IDs</div>
-                            {detectedIDs.map((id, index) => (
-                              <button
-                                key={`id-${index}`}
-                                onClick={() => useDetectedID(id)}
-                                className="w-full bg-primary/95 hover:bg-primary text-primary-foreground rounded-lg px-4 py-3 text-base font-mono font-bold shadow-lg transition-all hover:scale-[1.02] active:scale-95 flex items-center justify-between"
-                              >
-                                <span>{id}</span>
-                                <Search className="w-4 h-4" />
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                        
-                        <div className="bg-black/60 backdrop-blur-sm rounded-lg p-3">
-                          <div className="text-xs text-white/70 font-medium mb-2 px-1">Tap any text to search</div>
-                          <div className="flex flex-wrap gap-2">
-                            {selectableTexts.map((item, index) => (
-                              <button
-                                key={index}
-                                onClick={() => handleTextSelect(item.text)}
-                                className={`px-3 py-2 rounded-md text-sm font-medium transition-all hover:scale-105 active:scale-95 ${
-                                  item.isNumber
-                                    ? 'bg-primary/80 hover:bg-primary text-primary-foreground font-mono'
-                                    : 'bg-white/20 hover:bg-white/30 text-white'
-                                }`}
-                              >
-                                {item.text}
-                              </button>
-                            ))}
-                          </div>
+                        <div className="space-y-2">
+                          <div className="text-xs text-white/70 font-medium mb-2 px-2 bg-black/40 backdrop-blur-sm rounded-md py-1">Detected Product IDs</div>
+                          {detectedIDs.map((id, index) => (
+                            <button
+                              key={`id-${index}`}
+                              onClick={() => useDetectedID(id)}
+                              className="w-full bg-primary/95 hover:bg-primary text-primary-foreground rounded-lg px-4 py-3 text-base font-mono font-bold shadow-lg transition-all hover:scale-[1.02] active:scale-95 flex items-center justify-between"
+                            >
+                              <span>{id}</span>
+                              <Search className="w-4 h-4" />
+                            </button>
+                          ))}
                         </div>
                       </div>
                     </div>
                   )}
                 </div>
                 
-                {!isProcessingOCR && selectableTexts.length === 0 && (
+                {!isProcessingOCR && detectedIDs.length === 0 && (
                   <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 to-transparent">
                     <Button 
                       onClick={retakePhoto}
                       variant="outline"
-                      className="w-full bg-white/10 hover:bg-white/20 text-white border-white/30"
+                      className="w-full"
                       size="lg"
                     >
                       Retake Photo
@@ -1112,60 +1133,77 @@ export const ProductImageSearch = () => {
 
       {/* History Dialog */}
       <Dialog open={showHistoryDialog} onOpenChange={setShowHistoryDialog}>
-        <DialogContent className="max-w-md max-h-[80vh] overflow-y-auto">
-          <DialogTitle>Search History</DialogTitle>
-          <DialogDescription>Your recent product searches</DialogDescription>
+        <DialogContent className="max-w-md max-h-[80vh]">
+          <div>
+            <DialogTitle>Search History</DialogTitle>
+            <DialogDescription>Your recent product searches</DialogDescription>
+          </div>
           
-          {searchHistory.length === 0 ? (
-            <p className="text-muted-foreground text-center py-8">No search history yet</p>
-          ) : (
-            <div className="space-y-3">
-              {searchHistory.map((item) => (
-                <div key={item.id} className="flex items-center justify-between p-3 rounded-lg border bg-card hover:bg-accent transition-colors">
-                  <div className="flex-1">
-                    <p className="font-medium">ID: {item.productId}</p>
+          <div className="space-y-2 overflow-y-auto max-h-[60vh]">
+            {searchHistory.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">No search history yet</p>
+            ) : (
+              searchHistory.map((item) => (
+                <div key={item.id} className="flex items-center gap-3 p-3 rounded-lg border bg-card hover:bg-accent transition-colors">
+                  {item.thumbnail && (
+                    <div className="flex-shrink-0 w-16 h-16 rounded-md overflow-hidden bg-muted border">
+                      <img 
+                        src={item.thumbnail} 
+                        alt={item.productId}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                      />
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium truncate">ID: {item.productId}</p>
                     <p className="text-xs text-muted-foreground">
                       {new Date(item.timestamp).toLocaleString()}
                     </p>
                   </div>
                   <div className="flex gap-2">
                     <Button
-                      size="sm"
                       variant="outline"
+                      size="sm"
                       onClick={() => {
                         setProductId(item.productId);
                         setShowHistoryDialog(false);
                         handleSearch(item.productId);
                       }}
                     >
-                      <Search className="h-4 w-4" />
+                      <Search className="w-4 h-4" />
                     </Button>
                     {item.jiomartUrl && (
                       <Button
-                        size="sm"
                         variant="outline"
+                        size="sm"
                         onClick={() => window.open(item.jiomartUrl, '_blank')}
                       >
-                        <ExternalLink className="h-4 w-4" />
+                        <ExternalLink className="w-4 h-4" />
                       </Button>
                     )}
                   </div>
                 </div>
-              ))}
-            </div>
+              ))
+            )}
+          </div>
+
+          {searchHistory.length > 0 && (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => {
+                setSearchHistory([]);
+                localStorage.removeItem('searchHistory');
+                toast.success('History cleared');
+              }}
+              className="w-full"
+            >
+              Clear All History
+            </Button>
           )}
         </DialogContent>
       </Dialog>
-
-      {/* History Button */}
-      <Button
-        onClick={() => setShowHistoryDialog(true)}
-        className="fixed bottom-6 right-6 h-14 w-14 rounded-full shadow-2xl z-50 hover:scale-110 transition-transform"
-        size="icon"
-        title="Search History"
-      >
-        <History className="h-6 w-6" />
-      </Button>
     </div>
   );
 };
