@@ -1049,7 +1049,7 @@ export const ProductImageSearch = () => {
                   muted
                   className="w-full h-full object-cover"
                 />
-                nvas ref={canvasRef} className="hiddenn" />
+                <canvas ref={canvasRef} className="hiddenn" />
                 
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                   <div className="relative w-[85%] max-w-md aspect-[3/2] border-2 border-primary/60 rounded-lg">
