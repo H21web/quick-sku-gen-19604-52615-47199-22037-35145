@@ -14,7 +14,8 @@ const OCR_SPACE_API_KEY = 'K86120042088957';
 const GOOGLE_API_KEYS = [
   'AIzaSyCUb-RrSjsScT_gfhmdyOMVp3ZHSSsai1U',
   'AIzaSyDVvxwYZzZAOLy5Cd3FMNrQKcxZxldsJCY',
-  'AIzaSyBdRbGEG_nLOhaI1_RpNTN6kiwhEVcuxXo'
+  'AIzaSyBdRbGEG_nLOhaI1_RpNTN6kiwhEVcuxXo',
+  'AIzaSyDsTLL2TqDbV2DhXEwxny_5VIb1IjmQVn0'
 ];
 
 interface ImageResult {
