@@ -16,7 +16,8 @@ const GOOGLE_API_KEYS = [
   'AIzaSyDVvxwYZzZAOLy5Cd3FMNrQKcxZxldsJCY',
   'AIzaSyBdRbGEG_nLOhaI1_RpNTN6kiwhEVcuxXo',
   'AIzaSyDsTLL2TqDbV2DhXEwxny_5VIb1IjmQVn0',
-  'AIzaSyC0RGsJ8Q0Ery9CjyLBEp25REWV_SqpQPE'
+  'AIzaSyC0RGsJ8Q0Ery9CjyLBEp25REWV_SqpQPE',
+  'AIzaSyB5tGVlcRpnrRkfrttWo4kMK1-9PGj15y4'
 ];
 
 interface ImageResult {
