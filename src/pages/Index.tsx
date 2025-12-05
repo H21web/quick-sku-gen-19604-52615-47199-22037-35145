@@ -1,4 +1,4 @@
-import { ProductImageSearch } from '@/components/ProductImageSearch';
+import {ProductImageSearch} from '@/components/ProductImageSearch';
 
 const Index = () => {
   return (
