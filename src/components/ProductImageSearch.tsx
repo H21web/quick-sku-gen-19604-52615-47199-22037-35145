@@ -26,23 +26,11 @@ const getNextApiKey = (): string => {
   return key;
 };
 
-// Helper function to preload images
-const preloadImage = (url: string): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(url);
-    img.onerror = () => reject(url);
-    img.src = url;
-  });
-};
-
 export const ProductImageSearch = () => {
   const [productId, setProductId] = useState('');
   const [extractedImages, setExtractedImages] = useState<string[]>([]);
   const [loadedImages, setLoadedImages] = useState<Set<string>>(new Set());
-  const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
-  const [loadingImages, setLoadingImages] = useState(false);
   const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
   const [zoom, setZoom] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -96,45 +84,9 @@ export const ProductImageSearch = () => {
     });
   }, []);
 
-  // Preload all images function
-  const preloadAllImages = useCallback(async (imageUrls: string[]) => {
-    setLoadingImages(true);
-    setLoadedImages(new Set());
-    setFailedImages(new Set());
-
-    const batchSize = 5; // Load 5 images at a time
-    const newLoadedImages = new Set<string>();
-    const newFailedImages = new Set<string>();
-
-    for (let i = 0; i < imageUrls.length; i += batchSize) {
-      const batch = imageUrls.slice(i, i + batchSize);
-      
-      const results = await Promise.allSettled(
-        batch.map(url => preloadImage(url))
-      );
-
-      results.forEach((result, index) => {
-        const url = batch[index];
-        if (result.status === 'fulfilled') {
-          newLoadedImages.add(url);
-          setLoadedImages(prev => new Set([...prev, url]));
-        } else {
-          newFailedImages.add(url);
-          setFailedImages(prev => new Set([...prev, url]));
-        }
-      });
-    }
-
-    setLoadingImages(false);
-  }, []);
-
-  // Image load handler (backup for individual loads)
+  // Image load handler
   const handleImageLoad = useCallback((url: string) => {
     setLoadedImages(prev => new Set(prev).add(url));
-  }, []);
-
-  const handleImageError = useCallback((url: string) => {
-    setFailedImages(prev => new Set(prev).add(url));
   }, []);
 
   // Search with API key rotation
@@ -154,7 +106,6 @@ export const ProductImageSearch = () => {
     setLoading(true);
     setExtractedImages([]);
     setLoadedImages(new Set());
-    setFailedImages(new Set());
     setJiomartUrl('');
     setSearchTime(null);
 
@@ -233,7 +184,7 @@ export const ProductImageSearch = () => {
       jiomartLinks.map(url =>
         Promise.race([
           extractAllProductImages(url),
-          new Promise((_, reject) => setTimeout(() => reject('timeout'), 5000))
+          new Promise<string[]>((_, reject) => setTimeout(() => reject('timeout'), 5000))
         ])
       )
     );
@@ -260,11 +211,8 @@ export const ProductImageSearch = () => {
 
     setExtractedImages(sorted);
     saveToHistory(id, foundUrl, sorted[0]);
+    toast.success(`Found ${sorted.length} images`);
     setSearchTime((performance.now() - startTime) / 1000);
-    toast.success(`Found ${sorted.length} images - Loading...`);
-
-    // Preload all images immediately after setting them
-    await preloadAllImages(sorted);
   };
 
   // Image viewer functions
@@ -424,14 +372,12 @@ export const ProductImageSearch = () => {
 
   const captureImage = async () => {
     if (!videoRef.current || !canvasRef.current) return;
-
     const video = videoRef.current;
     const canvas = canvasRef.current;
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-
     ctx.drawImage(video, 0, 0);
     const imageData = canvas.toDataURL('image/jpeg', 0.92);
     setCapturedImage(imageData);
@@ -463,8 +409,8 @@ export const ProductImageSearch = () => {
 
       const result = await response.json();
       const text = result.ParsedResults?.[0]?.ParsedText || '';
-      const words = text.split(/\s+/).filter((w: string) => w.trim());
 
+      const words = text.split(/\s+/).filter((w: string) => w.trim());
       setSelectableTexts(words.map((word: string) => ({
         text: word.trim(),
         isNumber: /\d{5,}/.test(word)
@@ -510,74 +456,61 @@ export const ProductImageSearch = () => {
   }, [cameraStream]);
 
   const loadedCount = loadedImages.size;
-  const totalCount = extractedImages.length;
-  const failedCount = failedImages.size;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-blue-50 p-4 pb-24">
-      {/* Header */}
-      <div className="max-w-4xl mx-auto mb-8 text-center">
-        <h1 className="text-4xl font-bold bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent mb-2">
-          Product Image Finder
-        </h1>
-        <p className="text-gray-600">Search JioMart products by ID</p>
-      </div>
-
-      {/* Search Section */}
-      <div className="max-w-4xl mx-auto mb-8 flex gap-3">
-        <Input
-          type="text"
-          placeholder="Enter Product ID..."
-          value={productId}
-          onChange={(e) => setProductId(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-          className="flex-1"
-        />
-        <Button onClick={() => handleSearch()} disabled={loading}>
-          <Search className="w-4 h-4 mr-2" />
-          {loading ? 'Finding...' : 'Find'}
-        </Button>
-        <Button onClick={startCamera} variant="outline">
-          <Scan className="w-4 h-4" />
-        </Button>
-      </div>
-
-      {/* Loading Skeletons */}
-      {loading && (
-        <div className="max-w-4xl mx-auto grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 mb-8">
-          {[...Array(8)].map((_, i) => (
-            <Skeleton key={i} className="aspect-square rounded-lg" />
-          ))}
+    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50 p-4 md:p-8">
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="text-center mb-8">
+          <h1 className="text-4xl md:text-5xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent mb-2">
+            Product Image Finder
+          </h1>
+          <p className="text-gray-600">Search JioMart products by ID</p>
         </div>
-      )}
 
-      {/* Images Grid */}
-      {extractedImages.length > 0 && (
-        <div className="max-w-4xl mx-auto">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-semibold">
-              Product Images ({totalCount})
-            </h2>
-            <div className="flex items-center gap-3">
+        {/* Search Section */}
+        <div className="bg-white rounded-2xl shadow-xl p-6 mb-8">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <Input
+              type="text"
+              placeholder="Enter Product ID..."
+              value={productId}
+              onChange={(e) => setProductId(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+              className="flex-1"
+            />
+            <Button onClick={() => handleSearch()} disabled={loading}>
+              <Search className="w-4 h-4 mr-2" />
+              {loading ? 'Finding...' : 'Find'}
+            </Button>
+            <Button onClick={startCamera} variant="outline">
+              <Scan className="w-4 h-4 mr-2" />
+              Scan
+            </Button>
+          </div>
+        </div>
+
+        {/* Loading Skeletons */}
+        {loading && (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-8">
+            {[...Array(8)].map((_, i) => (
+              <Skeleton key={i} className="aspect-square rounded-lg" />
+            ))}
+          </div>
+        )}
+
+        {/* Images Grid */}
+        {extractedImages.length > 0 && (
+          <div className="bg-white rounded-2xl shadow-xl p-6">
+            <div className="flex flex-wrap items-center justify-between mb-4 gap-2">
+              <h2 className="text-2xl font-bold text-gray-800">
+                Product Images ({extractedImages.length})
+              </h2>
               {searchTime !== null && (
-                <span className="text-sm text-gray-600 bg-gray-100 px-3 py-1 rounded-full">
-                  {searchTime.toFixed(2)}s
-                </span>
+                <span className="text-sm text-gray-500">{searchTime.toFixed(2)}s</span>
               )}
-              {(loadingImages || loadedCount < totalCount) && (
-                <span className="text-sm font-medium text-purple-600 bg-purple-100 px-3 py-1 rounded-full animate-pulse">
-                  Loading: {loadedCount}/{totalCount}
-                </span>
-              )}
-              {!loadingImages && loadedCount === totalCount && failedCount === 0 && (
-                <span className="text-sm font-medium text-green-600 bg-green-100 px-3 py-1 rounded-full">
-                  ✓ All loaded
-                </span>
-              )}
-              {failedCount > 0 && (
-                <span className="text-sm font-medium text-orange-600 bg-orange-100 px-3 py-1 rounded-full">
-                  {failedCount} failed
-                </span>
+              {loadedCount < extractedImages.length && (
+                <span className="text-sm text-purple-600">{loadedCount}/{extractedImages.length}</span>
               )}
               {jiomartUrl && (
                 <Button
@@ -591,182 +524,133 @@ export const ProductImageSearch = () => {
                 </Button>
               )}
             </div>
-          </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-            {extractedImages.map((url, index) => (
-              <div
-                key={index}
-                onClick={() => openImage(index)}
-                className="relative aspect-square rounded-lg overflow-hidden cursor-pointer group bg-gray-100 hover:ring-4 hover:ring-purple-400 transition-all"
-              >
-                <img
-                  src={url}
-                  alt={`Product ${index + 1}`}
-                  className="w-full h-full object-cover"
-                  loading="eager"
-                  onLoad={() => handleImageLoad(url)}
-                  onError={() => handleImageError(url)}
-                />
-                {!loadedImages.has(url) && !failedImages.has(url) && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-gray-200">
-                    <Skeleton className="w-full h-full" />
-                  </div>
-                )}
-                {failedImages.has(url) && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-gray-200 text-gray-500 text-xs">
-                    Failed
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Image Viewer Dialog */}
-      <Dialog open={selectedImageIndex !== null} onOpenChange={(open) => !open && closeImage()}>
-        <DialogContent className="max-w-[95vw] max-h-[95vh] p-0 bg-black/95">
-          <DialogTitle className="sr-only">Product Image Viewer</DialogTitle>
-          <DialogDescription className="sr-only">View and navigate product images</DialogDescription>
-          {selectedImageIndex !== null && (
-            <div className="relative w-full h-[95vh] flex items-center justify-center">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={closeImage}
-                className="absolute top-4 right-4 z-50 bg-white/10 hover:bg-white/20 text-white backdrop-blur-sm"
-              >
-                <X className="w-6 h-6" />
-              </Button>
-
-              <div className="hidden md:flex absolute top-1/2 left-4 right-4 -translate-y-1/2 justify-between pointer-events-none z-40">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={goToPrevious}
-                  disabled={selectedImageIndex === 0}
-                  className="pointer-events-auto bg-white/10 hover:bg-white/20 text-white backdrop-blur-sm disabled:opacity-30"
-                >
-                  <ChevronLeft className="w-8 h-8" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={goToNext}
-                  disabled={selectedImageIndex === extractedImages.length - 1}
-                  className="pointer-events-auto bg-white/10 hover:bg-white/20 text-white backdrop-blur-sm disabled:opacity-30"
-                >
-                  <ChevronRight className="w-8 h-8" />
-                </Button>
-              </div>
-
-              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-40 flex gap-3 bg-white/10 backdrop-blur-sm rounded-full px-4 py-2">
-                <Button variant="ghost" size="icon" onClick={handleZoomOut} disabled={zoom <= 0.5}>
-                  <ZoomOut className="w-5 h-5 text-white" />
-                </Button>
-                <span className="text-white font-medium px-3 py-1">{Math.round(zoom * 100)}%</span>
-                <Button variant="ghost" size="icon" onClick={handleZoomIn} disabled={zoom >= 5}>
-                  <ZoomIn className="w-5 h-5 text-white" />
-                </Button>
-              </div>
-
-              {selectedImageIndex > 0 && (
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              {extractedImages.map((url, index) => (
                 <div
-                  className="md:hidden absolute left-0 top-0 bottom-0 w-1/3 cursor-pointer"
-                  onClick={goToPrevious}
-                />
-              )}
-
-              <img
-                ref={imageRef}
-                src={extractedImages[selectedImageIndex]}
-                alt={`Product ${selectedImageIndex + 1}`}
-                onTouchStart={handleTouchStart}
-                onTouchMove={handleTouchMove}
-                onTouchEnd={handleTouchEnd}
-                onMouseDown={handleMouseDown}
-                onMouseMove={handleMouseMove}
-                onMouseUp={handleMouseUp}
-                onMouseLeave={handleMouseLeave}
-                style={{
-                  transform: `scale(${zoom}) translate(${position.x / zoom}px, ${position.y / zoom}px)`,
-                  transition: isTransitioning ? 'none' : 'transform 0.1s ease-out',
-                  cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default',
-                  userSelect: 'none',
-                  touchAction: 'none'
-                }}
-                className="max-w-[80vw] max-h-[80vh] object-contain"
-                draggable={false}
-              />
-
-              {selectedImageIndex < extractedImages.length - 1 && (
-                <div
-                  className="md:hidden absolute right-0 top-0 bottom-0 w-1/3 cursor-pointer"
-                  onClick={goToNext}
-                />
-              )}
-
-              <div className="absolute bottom-20 left-1/2 -translate-x-1/2 bg-white/10 backdrop-blur-sm rounded-full px-4 py-2 text-white font-medium">
-                {selectedImageIndex + 1} / {extractedImages.length}
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Camera Dialog */}
-      <Dialog open={showCameraDialog} onOpenChange={(open) => !open && stopCamera()}>
-        <DialogContent className="max-w-[95vw] max-h-[95vh] p-6">
-          <DialogTitle>Camera Scanner</DialogTitle>
-          <DialogDescription>Capture product image for text extraction</DialogDescription>
-
-          {!capturedImage ? (
-            <>
-              <div className="relative aspect-video bg-black rounded-lg overflow-hidden">
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  className="w-full h-full object-cover"
-                />
-              </div>
-              <p className="text-sm text-center text-gray-600">Position product ID within the frame</p>
-              <Button onClick={captureImage} className="w-full">
-                <Scan className="w-5 h-5 mr-2" />
-                Capture
-              </Button>
-            </>
-          ) : (
-            <>
-              <div className="relative aspect-video bg-black rounded-lg overflow-hidden">
-                <img src={capturedImage} alt="Captured" className="w-full h-full object-contain" />
-              </div>
-
-              {isProcessingOCR && <p className="text-center text-gray-600 animate-pulse">Extracting text...</p>}
-
-              {!isProcessingOCR && selectableTexts.length > 0 && (
-                <div className="space-y-4">
-                  {detectedIDs.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="font-semibold text-sm text-purple-600">Product IDs</p>
-                      {detectedIDs.map((id, index) => (
-                        <Button
-                          key={index}
-                          onClick={() => useDetectedID(id)}
-                          className="w-full bg-primary/95 hover:bg-primary text-primary-foreground rounded-lg px-4 py-3 text-base font-mono font-bold shadow-lg transition-all hover:scale-[1.02] active:scale-95 flex items-center justify-between"
-                        >
-                          <Search className="w-5 h-5" />
-                          {id}
-                          <ExternalLink className="w-5 h-5" />
-                        </Button>
-                      ))}
-                    </div>
+                  key={url}
+                  onClick={() => openImage(index)}
+                  className="relative aspect-square rounded-lg overflow-hidden cursor-pointer group bg-gray-100 hover:ring-4 hover:ring-purple-400 transition-all"
+                >
+                  <img
+                    src={url}
+                    alt={`Product ${index + 1}`}
+                    className={`w-full h-full object-cover transition-opacity duration-300 ${
+                      loadedImages.has(url) ? 'opacity-100' : 'opacity-0'
+                    }`}
+                    onLoad={() => handleImageLoad(url)}
+                  />
+                  {!loadedImages.has(url) && (
+                    <Skeleton className="absolute inset-0" />
                   )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
-                  <div className="space-y-2">
+        {/* Image Viewer Dialog */}
+        <Dialog open={selectedImageIndex !== null} onOpenChange={(open) => !open && closeImage()}>
+          <DialogContent className="max-w-[95vw] max-h-[95vh] p-0 overflow-hidden bg-black/95">
+            <DialogTitle className="sr-only">Product Image Viewer</DialogTitle>
+            <DialogDescription className="sr-only">View and navigate product images</DialogDescription>
+            {selectedImageIndex !== null && (
+              <div className="relative w-full h-full flex items-center justify-center">
+                <div className="absolute top-4 right-4 z-10 flex gap-2">
+                  <Button size="icon" variant="secondary" onClick={handleZoomOut} disabled={zoom <= 0.5}>
+                    <ZoomOut className="w-4 h-4" />
+                  </Button>
+                  <Button size="icon" variant="secondary" onClick={handleZoomIn} disabled={zoom >= 5}>
+                    <ZoomIn className="w-4 h-4" />
+                  </Button>
+                  <Button size="icon" variant="secondary" onClick={closeImage}>
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+
+                {selectedImageIndex > 0 && (
+                  <Button size="icon" variant="secondary" className="absolute left-4 z-10" onClick={goToPrevious}>
+                    <ChevronLeft className="w-6 h-6" />
+                  </Button>
+                )}
+
+                <div
+                  onTouchStart={handleTouchStart}
+                  onTouchMove={handleTouchMove}
+                  onTouchEnd={handleTouchEnd}
+                  onMouseDown={handleMouseDown}
+                  onMouseMove={handleMouseMove}
+                  onMouseUp={handleMouseUp}
+                  onMouseLeave={handleMouseLeave}
+                  className="w-full h-full flex items-center justify-center overflow-hidden"
+                >
+                  <img
+                    ref={imageRef}
+                    src={extractedImages[selectedImageIndex]}
+                    alt={`Product ${selectedImageIndex + 1}`}
+                    style={{
+                      transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})`,
+                      transition: isTransitioning ? 'transform 0.3s ease-out' : 'none',
+                      cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default',
+                      userSelect: 'none',
+                      touchAction: 'none'
+                    }}
+                    className="max-w-[80vw] max-h-[80vh] object-contain"
+                    draggable={false}
+                  />
+                </div>
+
+                {selectedImageIndex < extractedImages.length - 1 && (
+                  <Button size="icon" variant="secondary" className="absolute right-4 z-10" onClick={goToNext}>
+                    <ChevronRight className="w-6 h-6" />
+                  </Button>
+                )}
+
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/60 text-white px-4 py-2 rounded-full text-sm">
+                  {selectedImageIndex + 1} / {extractedImages.length}
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        {/* Camera Dialog */}
+        <Dialog open={showCameraDialog} onOpenChange={(open) => !open && stopCamera()}>
+          <DialogContent className="max-w-[95vw] max-h-[95vh] p-6">
+            <DialogTitle>Camera Scanner</DialogTitle>
+            <DialogDescription>Capture product image for text extraction</DialogDescription>
+            {!capturedImage ? (
+              <>
+                <div className="relative bg-black rounded-lg overflow-hidden">
+                  <video ref={videoRef} autoPlay playsInline className="w-full h-auto" />
+                  <canvas ref={canvasRef} className="hidden" />
+                </div>
+                <p className="text-sm text-gray-600 text-center">Position product ID within the frame</p>
+                <Button onClick={captureImage} className="w-full">Capture</Button>
+              </>
+            ) : (
+              <>
+                <img src={capturedImage} alt="Captured" className="w-full rounded-lg" />
+                {isProcessingOCR && <p className="text-center text-purple-600">Extracting text...</p>}
+                {!isProcessingOCR && selectableTexts.length > 0 && (
+                  <div className="space-y-3">
+                    {detectedIDs.length > 0 && (
+                      <div className="space-y-2">
+                        <h3 className="font-semibold text-sm">Product IDs</h3>
+                        {detectedIDs.map((id, index) => (
+                          <button
+                            key={index}
+                            onClick={() => useDetectedID(id)}
+                            className="w-full bg-primary/95 hover:bg-primary text-primary-foreground rounded-lg px-4 py-3 text-base font-mono font-bold shadow-lg transition-all hover:scale-[1.02] active:scale-95 flex items-center justify-between"
+                          >
+                            {id}
+                            <Search className="w-4 h-4" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     <p className="text-sm text-gray-600">Tap any text to search</p>
-                    <div className="flex flex-wrap gap-2 max-h-48 overflow-y-auto">
+                    <div className="flex flex-wrap gap-2">
                       {selectableTexts.map((item, index) => (
                         <button
                           key={index}
@@ -782,85 +666,71 @@ export const ProductImageSearch = () => {
                       ))}
                     </div>
                   </div>
-                </div>
-              )}
+                )}
+                {!isProcessingOCR && selectableTexts.length === 0 && (
+                  <Button onClick={retakePhoto} variant="outline" className="w-full">Retake Photo</Button>
+                )}
+              </>
+            )}
+          </DialogContent>
+        </Dialog>
 
-              {!isProcessingOCR && selectableTexts.length === 0 && (
-                <Button onClick={retakePhoto} variant="outline" className="w-full">
-                  Retake Photo
-                </Button>
-              )}
-            </>
-          )}
-
-          <canvas ref={canvasRef} className="hidden" />
-        </DialogContent>
-      </Dialog>
-
-      {/* History Dialog */}
-      <Dialog open={showHistoryDialog} onOpenChange={setShowHistoryDialog}>
-        <DialogContent className="max-w-md max-h-[80vh] overflow-y-auto">
-          <DialogTitle>Search History</DialogTitle>
-          <DialogDescription>Your recent product searches</DialogDescription>
-
-          {searchHistory.length === 0 ? (
-            <p className="text-center text-gray-500 py-8">No search history yet</p>
-          ) : (
-            <div className="space-y-3">
-              {searchHistory.map((item) => (
-                <div
-                  key={item.id}
-                  className="flex items-center gap-3 p-3 rounded-lg border hover:bg-gray-50 transition-colors"
-                >
-                  {item.thumbnail && (
-                    <img
-                      src={item.thumbnail}
-                      alt="Thumbnail"
-                      className="w-16 h-16 rounded object-cover"
-                    />
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium truncate">ID: {item.productId}</p>
-                    <p className="text-xs text-gray-500">{new Date(item.timestamp).toLocaleString()}</p>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => {
-                        setProductId(item.productId);
-                        setShowHistoryDialog(false);
-                        handleSearch(item.productId);
-                      }}
-                    >
-                      <Search className="w-4 h-4" />
-                    </Button>
-                    {item.jiomartUrl && (
+        {/* History Dialog */}
+        <Dialog open={showHistoryDialog} onOpenChange={setShowHistoryDialog}>
+          <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+            <DialogTitle>Search History</DialogTitle>
+            <DialogDescription>Your recent product searches</DialogDescription>
+            {searchHistory.length === 0 ? (
+              <p className="text-center text-gray-500 py-8">No search history yet</p>
+            ) : (
+              <div className="space-y-3">
+                {searchHistory.map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+                  >
+                    {item.thumbnail && (
+                      <img src={item.thumbnail} alt="" className="w-16 h-16 object-cover rounded" />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="font-mono font-semibold">ID: {item.productId}</p>
+                      <p className="text-sm text-gray-500">{new Date(item.timestamp).toLocaleString()}</p>
+                    </div>
+                    <div className="flex gap-2">
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => window.open(item.jiomartUrl, '_blank')}
+                        onClick={() => {
+                          setProductId(item.productId);
+                          setShowHistoryDialog(false);
+                          handleSearch(item.productId);
+                        }}
                       >
-                        <ExternalLink className="w-4 h-4" />
+                        <Search className="w-4 h-4" />
                       </Button>
-                    )}
+                      {item.jiomartUrl && (
+                        <Button size="sm" variant="outline" onClick={() => window.open(item.jiomartUrl, '_blank')}>
+                          <ExternalLink className="w-4 h-4" />
+                        </Button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+                ))}
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
 
-      {/* History Button */}
-      <Button
-        onClick={() => setShowHistoryDialog(true)}
-        className="fixed bottom-6 right-6 h-14 w-14 rounded-full shadow-2xl z-50 hover:scale-110 transition-transform"
-        size="icon"
-        title="Search History"
-      >
-        <History className="w-6 h-6" />
-      </Button>
+        {/* History Button */}
+        <Button
+          onClick={() => setShowHistoryDialog(true)}
+          className="fixed bottom-6 right-6 h-14 w-14 rounded-full shadow-2xl z-50 hover:scale-110 transition-transform"
+          size="icon"
+          title="Search History"
+        >
+          <History className="w-6 h-6" />
+        </Button>
+      </div>
     </div>
   );
 };
