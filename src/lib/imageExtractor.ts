@@ -1,10 +1,11 @@
-// ✅ ULTRA-FAST PARALLEL IMAGE EXTRACTION - ALL IMAGES AT ONCE
+// ✅ ULTRA-FAST PARALLEL IMAGE EXTRACTION - ALL IMAGES IN MILLISECONDS
 
 // Global cache for maximum speed
 const imageExistsCache = new Map<string, boolean>();
 const cacheExpiry = 5 * 60 * 1000; // 5 minutes
 const cacheTimestamps = new Map<string, number>();
 
+// ✅ Ultra-fast image existence check with aggressive timeout
 const checkImageExists = async (url: string): Promise<boolean> => {
   const now = Date.now();
   
@@ -19,10 +20,11 @@ const checkImageExists = async (url: string): Promise<boolean> => {
   return new Promise((resolve) => {
     const img = new Image();
     const timeout = setTimeout(() => {
+      img.src = ''; // Cancel loading
       imageExistsCache.set(url, false);
       cacheTimestamps.set(url, now);
       resolve(false);
-    }, 150); // Ultra-fast 150ms timeout
+    }, 100); // Ultra-fast 100ms timeout
     
     img.onload = () => {
       clearTimeout(timeout);
@@ -72,7 +74,7 @@ const buildImageUrl = (
   return `${parts.baseUrl}/${resolution}/${parts.productId}/${parts.name}-${imageType}-${parts.productCode}-p${parts.pNumber}-${index}-${parts.timestamp}.jpg`;
 };
 
-// ✅ ULTRA-FAST: Check ALL images in parallel
+// ✅ ULTRA-FAST: Check ALL images in parallel - MILLISECONDS!
 export const extractAllProductImages = async (firstImageUrl: string): Promise<string[]> => {
   const startTime = performance.now();
   const parts = parseJiomartUrl(firstImageUrl);
@@ -82,67 +84,74 @@ export const extractAllProductImages = async (firstImageUrl: string): Promise<st
     return [];
   }
 
-  const MAX_CHECKS = 25; // Check up to 25 images
+  // ✅ Smart sequential checking strategy
+  const MAX_SEQUENTIAL = 30; // Check first 30 images sequentially
   
-  // ✅ Generate ALL possible URLs at once
+  // Generate URLs intelligently
   const allUrls: string[] = [];
   
-  // Product images (0-24)
-  for (let i = 0; i < MAX_CHECKS; i++) {
+  // Priority 1: Product images 0-29 (most common)
+  for (let i = 0; i < MAX_SEQUENTIAL; i++) {
     allUrls.push(buildImageUrl(parts, 'product-images', i));
   }
   
-  // Legal images (0-24)
-  for (let i = 0; i < MAX_CHECKS; i++) {
+  // Priority 2: Legal images 0-29
+  for (let i = 0; i < MAX_SEQUENTIAL; i++) {
     allUrls.push(buildImageUrl(parts, 'legal-images', i));
   }
-  
-  // Fallback: Try pNumber variations for first 10 images
-  const pNumberVariations = [
-    parseInt(parts.pNumber) + 1,
-    parseInt(parts.pNumber) - 1,
-  ];
-  
-  for (const pNum of pNumberVariations) {
-    const modifiedParts = { ...parts, pNumber: pNum.toString() };
-    for (let i = 0; i < 10; i++) {
-      allUrls.push(buildImageUrl(modifiedParts, 'product-images', i));
-      allUrls.push(buildImageUrl(modifiedParts, 'legal-images', i));
-    }
-  }
 
-  // ✅ CHECK ALL URLS IN PARALLEL - Maximum speed!
+  // ✅ CHECK ALL URLS IN PARALLEL - Maximum concurrency!
+  // Use Promise.all for true parallel execution
   const results = await Promise.all(
-    allUrls.map(async (url) => ({
-      url,
-      exists: await checkImageExists(url)
-    }))
+    allUrls.map(async (url) => {
+      const exists = await checkImageExists(url);
+      return exists ? url : null;
+    })
   );
 
-  // Filter valid images
-  const validImages = results
-    .filter(r => r.exists)
-    .map(r => r.url);
-
-  // Remove duplicates
+  // Filter valid images and remove nulls
+  const validImages = results.filter((url): url is string => url !== null);
+  
+  // Remove duplicates (safety check)
   const uniqueImages = [...new Set(validImages)];
   
   const processingTime = ((performance.now() - startTime) / 1000).toFixed(3);
-  console.log(`✅ Extracted ${uniqueImages.length} images in ${processingTime}s from ${firstImageUrl}`);
+  console.log(`⚡ Extracted ${uniqueImages.length} images in ${processingTime}s from ${firstImageUrl}`);
   
   return uniqueImages;
 };
 
-// ✅ Preload images for instant display
-export const preloadImages = (urls: string[], priority: number = 12) => {
-  urls.slice(0, priority).forEach(url => {
-    const img = new Image();
-    img.src = url;
-  });
+// ✅ Preload images for instant display with priority
+export const preloadImages = (urls: string[], priority: number = 15) => {
+  // Use requestIdleCallback for better performance
+  const preload = () => {
+    urls.slice(0, priority).forEach((url, index) => {
+      const img = new Image();
+      // Stagger loading slightly to avoid overwhelming browser
+      setTimeout(() => {
+        img.src = url;
+      }, index * 10);
+    });
+  };
+
+  if ('requestIdleCallback' in window) {
+    requestIdleCallback(preload);
+  } else {
+    setTimeout(preload, 0);
+  }
 };
 
 // ✅ Clear cache when needed
 export const clearImageCache = () => {
   imageExistsCache.clear();
   cacheTimestamps.clear();
+  console.log('🧹 Image cache cleared');
+};
+
+// ✅ Get cache stats for debugging
+export const getCacheStats = () => {
+  return {
+    size: imageExistsCache.size,
+    entries: Array.from(imageExistsCache.entries()).slice(0, 10)
+  };
 };
