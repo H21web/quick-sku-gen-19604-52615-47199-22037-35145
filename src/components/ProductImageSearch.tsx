@@ -986,3 +986,4 @@ export const ProductImageSearch = () => {
     </div>
   );
 };
+
