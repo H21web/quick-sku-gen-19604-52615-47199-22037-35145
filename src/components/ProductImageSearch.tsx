@@ -48,7 +48,7 @@ export const ProductImageSearch = () => {
   const [showHistoryDialog, setShowHistoryDialog] = useState(false);
   const [isAutoLoading, setIsAutoLoading] = useState(false);
   const [showScanAnimation, setShowScanAnimation] = useState(false);
-  
+
   // Pan/Zoom states
   const [zoom, setZoom] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -56,15 +56,17 @@ export const ProductImageSearch = () => {
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const touchStartRef = useRef<{ distance: number; zoom: number; x: number; y: number } | null>(null);
   const swipeStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
-  
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const currentSearchIdRef = useRef('');
   const processedLinksRef = useRef<Set<string>>(new Set());
+
   const [apiKeyStatuses, setApiKeyStatuses] = useState<ApiKeyStatus[]>(() =>
     GOOGLE_API_KEYS.map(key => ({ key, exhausted: false, lastReset: Date.now() }))
   );
   const currentKeyIndexRef = useRef(0);
+
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
   useEffect(() => {
@@ -120,10 +122,12 @@ export const ProductImageSearch = () => {
       try {
         const url = buildUrl(apiKey);
         const response = await fetch(url);
+
         if (response.ok) return response;
 
         const errorData = await response.json().catch(() => ({}));
         const errorMessage = errorData.error?.message || '';
+
         const isRateLimitError =
           response.status === 429 ||
           errorMessage.toLowerCase().includes('quota') ||
@@ -155,7 +159,7 @@ export const ProductImageSearch = () => {
   const saveToHistory = useCallback((productId: string, jiomartUrl?: string, thumbnail?: string) => {
     setSearchHistory((prevHistory) => {
       const existingIndex = prevHistory.findIndex(item => item.productId === productId);
-      
+
       if (existingIndex !== -1) {
         const updatedItem = {
           ...prevHistory[existingIndex],
@@ -163,12 +167,10 @@ export const ProductImageSearch = () => {
           jiomartUrl: jiomartUrl || prevHistory[existingIndex].jiomartUrl,
           thumbnail: thumbnail || prevHistory[existingIndex].thumbnail
         };
-        
         const updatedHistory = [
           updatedItem,
           ...prevHistory.filter((_, idx) => idx !== existingIndex)
         ].slice(0, 20);
-        
         localStorage.setItem('searchHistory', JSON.stringify(updatedHistory));
         return updatedHistory;
       } else {
@@ -179,7 +181,6 @@ export const ProductImageSearch = () => {
           jiomartUrl,
           thumbnail
         };
-        
         const updatedHistory = [newHistoryItem, ...prevHistory].slice(0, 20);
         localStorage.setItem('searchHistory', JSON.stringify(updatedHistory));
         return updatedHistory;
@@ -187,62 +188,50 @@ export const ProductImageSearch = () => {
     });
   }, []);
 
-  // ✅ FIXED: Simultaneous loading with proper deduplication
+  // ✅ FIXED: Load ALL images from ALL links SIMULTANEOUSLY without delays
   const loadAllImagesSimultaneously = useCallback(async (links: string[], searchId: string) => {
     setIsAutoLoading(true);
-    
-    // Process all links simultaneously in batches of 4
-    const batchSize = 4;
-    const batches: string[][] = [];
-    
-    for (let i = 0; i < links.length; i += batchSize) {
-      batches.push(links.slice(i, i + batchSize));
-    }
-    
-    for (const batch of batches) {
-      if (searchId !== currentSearchIdRef.current) break;
-      
-      const batchResults = await Promise.allSettled(
-        batch.map(async (link) => {
-          if (processedLinksRef.current.has(link)) return [];
+
+    // ✅ Extract images from ALL links at once using Promise.all (no batching)
+    const allResults = await Promise.allSettled(
+      links.map(async (link) => {
+        if (processedLinksRef.current.has(link)) return [];
+        
+        try {
+          const images = await Promise.race([
+            extractAllProductImages(link),
+            new Promise<string[]>((_, reject) =>
+              setTimeout(() => reject(new Error('timeout')), 3000)
+            )
+          ]);
           
-          try {
-            const images = await Promise.race([
-              extractAllProductImages(link),
-              new Promise<string[]>((_, reject) =>
-                setTimeout(() => reject(new Error('timeout')), 3000)
-              )
-            ]);
-            
-            processedLinksRef.current.add(link);
-            return Array.isArray(images) ? images : [];
-          } catch (error) {
-            processedLinksRef.current.add(link);
-            return [];
-          }
-        })
-      );
-      
-      const newImages = batchResults
-        .filter(r => r.status === 'fulfilled')
-        .flatMap(r => r.value);
-      
-      if (newImages.length > 0 && searchId === currentSearchIdRef.current) {
-        setExtractedImages(prev => {
-          const combined = [...prev, ...newImages];
-          // Remove duplicates
-          const unique = Array.from(new Set(combined));
-          return [
-            ...unique.filter(url => url.includes('/original/')),
-            ...unique.filter(url => !url.includes('/original/'))
-          ];
-        });
-      }
-      
-      // Minimal delay between batches
-      await new Promise(resolve => setTimeout(resolve, 50));
+          processedLinksRef.current.add(link);
+          return Array.isArray(images) ? images : [];
+        } catch (error) {
+          processedLinksRef.current.add(link);
+          return [];
+        }
+      })
+    );
+
+    // ✅ Collect ALL images from ALL links
+    const allNewImages = allResults
+      .filter(r => r.status === 'fulfilled')
+      .flatMap(r => r.value);
+
+    // ✅ Update state ONCE with all images
+    if (allNewImages.length > 0 && searchId === currentSearchIdRef.current) {
+      setExtractedImages(prev => {
+        const combined = [...prev, ...allNewImages];
+        // Remove duplicates
+        const unique = Array.from(new Set(combined));
+        return [
+          ...unique.filter(url => url.includes('/original/')),
+          ...unique.filter(url => !url.includes('/original/'))
+        ];
+      });
     }
-    
+
     setIsAutoLoading(false);
   }, []);
 
@@ -260,7 +249,6 @@ export const ProductImageSearch = () => {
 
     const newSearchId = `${idToSearch}_${Date.now()}`;
     currentSearchIdRef.current = newSearchId;
-
     setLoading(true);
     setExtractedImages([]);
     setJiomartUrl('');
@@ -268,7 +256,6 @@ export const ProductImageSearch = () => {
 
     try {
       const query = `site:jiomart.com ${idToSearch}`;
-
       const [imageResponse, webResponse] = await Promise.all([
         fetchWithRetry((apiKey) =>
           `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&searchType=image&num=10&fields=items(link)`
@@ -307,34 +294,44 @@ export const ProductImageSearch = () => {
         return;
       }
 
-      // ✅ Load first link immediately for instant feedback
-      const firstLink = jiomartLinks[0];
-      try {
-        const firstImages = await extractAllProductImages(firstLink);
-        processedLinksRef.current.add(firstLink);
-        
-        if (firstImages.length > 0) {
-          setExtractedImages(firstImages);
-          preloadImages(firstImages, 12);
-          
-          // Update history thumbnail
-          setTimeout(() => {
-            saveToHistory(idToSearch, foundUrl, firstImages[0]);
-          }, 200);
+      // ✅ Load ALL images from ALL links immediately - NO delays
+      const allImagesPromises = jiomartLinks.map(async (link) => {
+        try {
+          const images = await extractAllProductImages(link);
+          processedLinksRef.current.add(link);
+          return Array.isArray(images) ? images : [];
+        } catch (error) {
+          processedLinksRef.current.add(link);
+          return [];
         }
-      } catch (error) {
-        processedLinksRef.current.add(firstLink);
-      }
+      });
 
-      // ✅ Load ALL remaining images simultaneously in background
-      const remainingLinks = jiomartLinks.slice(1);
-      if (remainingLinks.length > 0) {
+      // ✅ Wait for ALL links to finish extracting
+      const allImagesResults = await Promise.allSettled(allImagesPromises);
+      
+      const allImages = allImagesResults
+        .filter(r => r.status === 'fulfilled')
+        .flatMap(r => r.value);
+
+      // ✅ Remove duplicates and prioritize 'original' resolution
+      const uniqueImages = Array.from(new Set(allImages));
+      const sortedImages = [
+        ...uniqueImages.filter(url => url.includes('/original/')),
+        ...uniqueImages.filter(url => !url.includes('/original/'))
+      ];
+
+      setExtractedImages(sortedImages);
+      
+      if (sortedImages.length > 0) {
+        preloadImages(sortedImages, 12);
+        // Update history thumbnail
         setTimeout(() => {
-          loadAllImagesSimultaneously(remainingLinks, newSearchId);
+          saveToHistory(idToSearch, foundUrl, sortedImages[0]);
         }, 200);
+        toast.success(`Loaded ${sortedImages.length} images`);
+      } else {
+        toast.error('No valid images found');
       }
-
-      toast.success('Images loading...');
 
     } catch (error: any) {
       console.error('Search error:', error);
@@ -346,7 +343,7 @@ export const ProductImageSearch = () => {
     } finally {
       setLoading(false);
     }
-  }, [productId, saveToHistory, getNextApiKey, markApiKeyExhausted, fetchWithRetry, loadAllImagesSimultaneously]);
+  }, [productId, saveToHistory, getNextApiKey, markApiKeyExhausted, fetchWithRetry]);
 
   const startCamera = async () => {
     try {
@@ -357,10 +354,8 @@ export const ProductImageSearch = () => {
           height: { ideal: 1080 }
         }
       });
-
       setCameraStream(stream);
       setShowCameraDialog(true);
-
       setTimeout(() => {
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
@@ -377,11 +372,9 @@ export const ProductImageSearch = () => {
       cameraStream.getTracks().forEach(track => track.stop());
       setCameraStream(null);
     }
-
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
-
     setShowCameraDialog(false);
     setCapturedImage(null);
     setDetectedIDs([]);
@@ -393,7 +386,6 @@ export const ProductImageSearch = () => {
 
     const video = videoRef.current;
     const canvas = canvasRef.current;
-
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
 
@@ -402,9 +394,8 @@ export const ProductImageSearch = () => {
 
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     const imageData = canvas.toDataURL('image/jpeg', 0.9);
-
     setCapturedImage(imageData);
-    
+
     // Show scan animation
     setShowScanAnimation(true);
     setTimeout(() => setShowScanAnimation(false), 600);
@@ -425,7 +416,6 @@ export const ProductImageSearch = () => {
 
   const extractTextFromImage = async (imageData: string) => {
     setIsProcessingOCR(true);
-
     try {
       const img = new Image();
       img.src = imageData;
@@ -446,7 +436,6 @@ export const ProductImageSearch = () => {
 
       canvas.width = width;
       canvas.height = height;
-
       const ctx = canvas.getContext('2d');
       if (ctx) {
         ctx.drawImage(img, 0, 0, width, height);
@@ -479,9 +468,9 @@ export const ProductImageSearch = () => {
       }
 
       const extractedText = result.ParsedResults?.[0]?.ParsedText || '';
-
       const foundIDs = new Set<string>();
       const fullText = extractedText.replace(/\n/g, ' ');
+
       const cleanedText = fullText
         .replace(/[oO]/g, '0')
         .replace(/[lI|]/g, '1')
@@ -527,7 +516,6 @@ export const ProductImageSearch = () => {
         toast.success(`Found ${uniqueIDs.length} ID(s). Searching: ${firstID}`);
         setTimeout(() => handleSearch(firstID), 100);
       }
-
     } catch (error: any) {
       console.error('OCR error:', error);
       toast.error('OCR failed. Try again.');
@@ -565,7 +553,6 @@ export const ProductImageSearch = () => {
         y: e.touches[0].clientY,
         time: Date.now()
       };
-
       if (zoom > 1) {
         setIsDragging(true);
         setDragStart({ x: e.touches[0].clientX - position.x, y: e.touches[0].clientY - position.y });
@@ -607,7 +594,6 @@ export const ProductImageSearch = () => {
         }
       }
     }
-
     touchStartRef.current = null;
     swipeStartRef.current = null;
     setIsDragging(false);
@@ -678,62 +664,64 @@ export const ProductImageSearch = () => {
   }, [extractedImages]);
 
   return (
-    <div className="w-full min-h-screen bg-background">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 pb-6">
       {/* Compact Header */}
-      <div className="sticky top-0 z-40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 py-3">
-          <div className="flex items-center gap-3">
+      <div className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b shadow-sm">
+        <div className="max-w-5xl mx-auto px-4 py-3">
+          <div className="flex items-center gap-2 mb-2">
             <div className="relative flex-1">
               <Input
+                type="text"
                 placeholder="Enter Product ID"
                 value={productId}
                 onChange={(e) => setProductId(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                 className="h-11 pr-11"
               />
-              <button
+              <Button
+                size="icon"
                 onClick={startCamera}
-                className="absolute right-1 top-1/2 -translate-y-1/2 p-2 hover:bg-accent rounded-md transition-colors"
-                title="Scan product"
+                className="absolute right-1 top-1 h-9 w-9 rounded-md"
+                variant="ghost"
               >
-                <Scan className="h-5 w-5 text-muted-foreground" />
-              </button>
+                <Camera className="h-5 w-5" />
+              </Button>
             </div>
-            
             <Button onClick={() => handleSearch()} disabled={loading} className="h-11 px-6">
-              <Search className="h-4 w-4 mr-2" />
+              <Search className="mr-2 h-4 w-4" />
               {loading ? 'Loading...' : 'Find'}
             </Button>
           </div>
-          
-          <div className="flex items-center justify-between mt-3">
-            <div className="text-sm text-muted-foreground">
-              {extractedImages.length > 0 && (
-                <>
+
+          <div className="flex items-center justify-between text-sm">
+            {extractedImages.length > 0 && (
+              <>
+                <div className="font-medium text-blue-600">
                   {extractedImages.length} Image{extractedImages.length !== 1 ? 's' : ''}
-                  {isAutoLoading && <span className="ml-2 animate-pulse">(Loading more...)</span>}
-                </>
-              )}
-            </div>
-            <div className="flex gap-2">
+                  {isAutoLoading && <span className="ml-2 text-gray-500">(Loading more...)</span>}
+                </div>
+              </>
+            )}
+
+            <div className="flex items-center gap-2">
               {jiomartUrl && (
                 <Button
-                  size="sm"
                   variant="outline"
+                  size="sm"
                   onClick={() => window.open(jiomartUrl, '_blank')}
                   className="h-8"
                 >
-                  <ExternalLink className="h-3 w-3 mr-1" />
+                  <ExternalLink className="mr-1 h-3 w-3" />
                   Open Product
                 </Button>
               )}
               <Button
-                size="sm"
                 variant="outline"
+                size="sm"
                 onClick={() => setShowHistoryDialog(true)}
                 className="h-8"
               >
-                <History className="h-3 w-3 mr-1" />
+                <History className="mr-1 h-3 w-3" />
                 History
               </Button>
             </div>
@@ -742,7 +730,7 @@ export const ProductImageSearch = () => {
       </div>
 
       {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-4 py-4">
+      <div className="max-w-5xl mx-auto px-4 mt-6">
         {loading && (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
             {[...Array(10)].map((_, i) => (
@@ -752,11 +740,11 @@ export const ProductImageSearch = () => {
         )}
 
         {extractedImages.length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
             {extractedImages.map((url, index) => (
               <div
-                key={`${url}-${index}`}
-                className="relative aspect-square rounded-lg overflow-hidden border hover:ring-2 hover:ring-primary transition-all cursor-pointer group"
+                key={index}
+                className="group relative aspect-square rounded-lg overflow-hidden bg-white shadow-sm hover:shadow-xl transition-all cursor-pointer border-2 border-transparent hover:border-blue-400"
                 onClick={() => {
                   setSelectedImageIndex(index);
                   setZoom(1);
@@ -766,11 +754,11 @@ export const ProductImageSearch = () => {
                 <img
                   src={url}
                   alt={`Product ${index + 1}`}
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                  loading={index < 15 ? 'eager' : 'lazy'}
+                  className="w-full h-full object-contain"
+                  loading="lazy"
                 />
-                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/50 to-transparent p-2">
-                  <span className="text-white text-xs font-medium">{index + 1}</span>
+                <div className="absolute bottom-2 right-2 bg-black/60 text-white text-xs px-2 py-1 rounded-full backdrop-blur-sm">
+                  {index + 1}
                 </div>
               </div>
             ))}
@@ -780,32 +768,29 @@ export const ProductImageSearch = () => {
 
       {/* Fullscreen Slideshow */}
       {selectedImageIndex !== null && (
-        <div className="fixed inset-0 z-50 bg-black">
-          <div
-            className="w-full h-full flex items-center justify-center overflow-hidden"
-            onTouchStart={handleTouchStart}
-            onTouchMove={handleTouchMove}
-            onTouchEnd={handleTouchEnd}
-            onMouseDown={handleMouseDown}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
-            onMouseLeave={handleMouseUp}
-            onWheel={handleWheel}
-          >
-            <img
-              src={extractedImages[selectedImageIndex]}
-              alt={`Product ${selectedImageIndex + 1}`}
-              className="max-w-full max-h-full object-contain select-none"
-              style={{
-                transform: `scale(${zoom}) translate(${position.x / zoom}px, ${position.y / zoom}px)`,
-                cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default',
-                transition: isDragging ? 'none' : 'transform 0.2s ease-out',
-                touchAction: 'none',
-                userSelect: 'none'
-              }}
-              draggable={false}
-            />
-          </div>
+        <div
+          className="fixed inset-0 bg-black z-[100] flex items-center justify-center"
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onWheel={handleWheel}
+        >
+          <img
+            src={extractedImages[selectedImageIndex]}
+            alt={`Product ${selectedImageIndex + 1}`}
+            className="max-w-full max-h-full object-contain select-none"
+            style={{
+              transform: `scale(${zoom}) translate(${position.x / zoom}px, ${position.y / zoom}px)`,
+              cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default',
+              transition: isDragging ? 'none' : 'transform 0.2s ease-out',
+              touchAction: 'none',
+              userSelect: 'none'
+            }}
+            draggable={false}
+          />
 
           {/* Close Button */}
           <button
@@ -825,7 +810,7 @@ export const ProductImageSearch = () => {
               onClick={goToPrevious}
               className="absolute left-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-sm transition-all z-10"
             >
-              <ChevronLeft className="h-8 w-8 text-white" />
+              <ChevronLeft className="h-6 w-6 text-white" />
             </button>
           )}
 
@@ -834,21 +819,19 @@ export const ProductImageSearch = () => {
               onClick={goToNext}
               className="absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-sm transition-all z-10"
             >
-              <ChevronRight className="h-8 w-8 text-white" />
+              <ChevronRight className="h-6 w-6 text-white" />
             </button>
           )}
 
           {/* Counter */}
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-full bg-black/40 backdrop-blur-sm z-10">
-            <span className="text-white text-sm font-medium">
-              {selectedImageIndex + 1} / {extractedImages.length}
-            </span>
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/60 text-white px-4 py-2 rounded-full backdrop-blur-sm">
+            {selectedImageIndex + 1} / {extractedImages.length}
           </div>
 
           {/* Zoom Indicator */}
           {zoom > 1 && (
-            <div className="absolute top-4 left-4 px-3 py-1 rounded-full bg-black/40 backdrop-blur-sm z-10">
-              <span className="text-white text-xs font-medium">{(zoom * 100).toFixed(0)}%</span>
+            <div className="absolute top-4 left-4 bg-black/60 text-white px-3 py-1 rounded-full backdrop-blur-sm text-sm">
+              {(zoom * 100).toFixed(0)}%
             </div>
           )}
         </div>
@@ -856,82 +839,52 @@ export const ProductImageSearch = () => {
 
       {/* Fullscreen OCR Camera Dialog */}
       <Dialog open={showCameraDialog} onOpenChange={(open) => !open && stopCamera()}>
-        <DialogContent className="max-w-full max-h-full w-screen h-screen p-0 m-0 gap-0 border-0 rounded-none">
+        <DialogContent className="max-w-4xl max-h-[90vh] p-0">
           <DialogTitle className="sr-only">Scan Product</DialogTitle>
           <DialogDescription className="sr-only">Capture and extract product ID</DialogDescription>
 
           {!capturedImage ? (
-            <div className="relative w-full h-full bg-black">
+            <div className="relative w-full h-[70vh] bg-black">
               <video
                 ref={videoRef}
                 autoPlay
                 playsInline
-                muted
-                className="w-full h-full object-cover"
+                className="w-full h-full object-contain"
               />
               <canvas ref={canvasRef} className="hidden" />
-              
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                <div className="relative w-4/5 max-w-md aspect-[4/3]">
-                  <div className="absolute top-0 left-0 w-12 h-12 border-t-4 border-l-4 border-white rounded-tl-lg"></div>
-                  <div className="absolute top-0 right-0 w-12 h-12 border-t-4 border-r-4 border-white rounded-tr-lg"></div>
-                  <div className="absolute bottom-0 left-0 w-12 h-12 border-b-4 border-l-4 border-white rounded-bl-lg"></div>
-                  <div className="absolute bottom-0 right-0 w-12 h-12 border-b-4 border-r-4 border-white rounded-br-lg"></div>
+
+              <div className="absolute inset-0 pointer-events-none">
+                <div className="absolute inset-x-0 top-1/4 mx-auto w-[90%] max-w-md h-32 border-4 border-blue-500 rounded-lg shadow-2xl">
+                  <div className="absolute -top-8 left-0 right-0 text-center text-white text-sm font-medium bg-black/50 py-1 rounded-t-lg">
+                    Position product ID within frame
+                  </div>
                 </div>
               </div>
-              
-              <div className="absolute top-8 left-0 right-0 text-center">
-                <p className="text-white text-sm font-medium bg-black/50 backdrop-blur-sm py-2 px-4 rounded-full inline-block">
-                  Position product ID within frame
-                </p>
-              </div>
-              
-              <button
-                onClick={stopCamera}
-                className="absolute top-4 right-4 p-3 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-sm transition-all"
+
+              <Button
+                onClick={captureImage}
+                size="lg"
+                className="absolute bottom-6 left-1/2 -translate-x-1/2 w-20 h-20 rounded-full"
               >
-                <X className="h-6 w-6 text-white" />
-              </button>
-              
-              <div className="absolute bottom-8 left-1/2 -translate-x-1/2">
-                <button
-                  onClick={captureImage}
-                  className="p-6 rounded-full bg-white hover:bg-gray-100 shadow-2xl transition-all active:scale-95"
-                >
-                  <Camera className="h-8 w-8 text-gray-900" />
-                </button>
-              </div>
+                <Scan className="h-8 w-8" />
+              </Button>
             </div>
           ) : (
-            <div className="relative w-full h-full bg-black flex flex-col">
-              <div className="flex-1 relative overflow-hidden">
-                <img src={capturedImage} alt="Captured" className="w-full h-full object-contain" />
-                
-                {showScanAnimation && (
-                  <div className="absolute inset-0 pointer-events-none">
-                    <div className="absolute inset-0 bg-white/20 animate-[scan_0.6s_ease-in-out]"></div>
-                  </div>
-                )}
-              </div>
-              
-              <canvas ref={canvasRef} className="hidden" />
+            <div className="relative w-full h-[70vh] bg-black flex items-center justify-center">
+              {showScanAnimation && (
+                <div className="absolute inset-0 bg-white/20 animate-pulse z-10" />
+              )}
 
-              <button
-                onClick={stopCamera}
-                className="absolute top-4 right-4 p-3 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-sm transition-all z-10"
-              >
-                <X className="h-6 w-6 text-white" />
-              </button>
+              <img src={capturedImage} alt="Captured" className="max-w-full max-h-full object-contain" />
 
-              <div className="bg-background/95 backdrop-blur p-4 max-h-[50vh] overflow-y-auto">
-                {isProcessingOCR ? (
-                  <div className="flex flex-col items-center justify-center py-8">
-                    <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary mb-3"></div>
-                    <p className="text-sm text-muted-foreground">Extracting text...</p>
-                  </div>
-                ) : detectedIDs.length > 0 ? (
+              {isProcessingOCR ? (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/70">
+                  <div className="text-white text-xl font-semibold">Extracting text...</div>
+                </div>
+              ) : detectedIDs.length > 0 ? (
+                <div className="absolute bottom-0 left-0 right-0 bg-white p-6 max-h-[40vh] overflow-y-auto">
+                  <h3 className="font-bold text-lg mb-4">Detected Product IDs</h3>
                   <div className="space-y-2">
-                    <h3 className="font-semibold text-center mb-3">Detected Product IDs</h3>
                     {detectedIDs.map((id, index) => (
                       <button
                         key={index}
@@ -943,12 +896,16 @@ export const ProductImageSearch = () => {
                       </button>
                     ))}
                   </div>
-                ) : (
-                  <Button onClick={retakePhoto} variant="outline" className="w-full">
-                    Retake Photo
-                  </Button>
-                )}
-              </div>
+                </div>
+              ) : (
+                <Button
+                  onClick={retakePhoto}
+                  size="lg"
+                  className="absolute bottom-6 left-1/2 -translate-x-1/2"
+                >
+                  Retake Photo
+                </Button>
+              )}
             </div>
           )}
         </DialogContent>
@@ -956,37 +913,35 @@ export const ProductImageSearch = () => {
 
       {/* History Dialog */}
       <Dialog open={showHistoryDialog} onOpenChange={setShowHistoryDialog}>
-        <DialogContent className="max-w-md max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[80vh]">
           <DialogTitle>Search History</DialogTitle>
           <DialogDescription>Your recent product searches</DialogDescription>
 
           {searchHistory.length === 0 ? (
-            <p className="text-center text-muted-foreground py-8">No search history yet</p>
+            <div className="text-center py-12 text-gray-500">No search history yet</div>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-2 max-h-[50vh] overflow-y-auto">
               {searchHistory.map((item) => (
                 <div
                   key={item.id}
-                  className="flex items-center gap-3 p-3 border rounded-lg hover:bg-accent cursor-pointer transition-colors"
+                  className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 border transition-all"
                 >
                   {item.thumbnail && (
                     <img
                       src={item.thumbnail}
                       alt={item.productId}
-                      className="w-12 h-12 object-cover rounded flex-shrink-0"
+                      className="w-16 h-16 object-contain rounded border"
                     />
                   )}
                   <div className="flex-1 min-w-0">
-                    <p className="font-mono text-sm font-semibold truncate">{item.productId}</p>
-                    <p className="text-xs text-muted-foreground">
+                    <div className="font-mono font-bold">{item.productId}</div>
+                    <div className="text-sm text-gray-500">
                       {new Date(item.timestamp).toLocaleString()}
-                    </p>
+                    </div>
                   </div>
-                  <div className="flex gap-1 flex-shrink-0">
+                  <div className="flex gap-2">
                     <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-8 w-8"
+                      size="sm"
                       onClick={() => {
                         setProductId(item.productId);
                         setShowHistoryDialog(false);
@@ -997,9 +952,8 @@ export const ProductImageSearch = () => {
                     </Button>
                     {item.jiomartUrl && (
                       <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-8 w-8"
+                        size="sm"
+                        variant="outline"
                         onClick={() => window.open(item.jiomartUrl, '_blank')}
                       >
                         <ExternalLink className="h-4 w-4" />
@@ -1012,7 +966,7 @@ export const ProductImageSearch = () => {
           )}
 
           {searchHistory.length > 0 && (
-            <div className="pt-3 border-t mt-3">
+            <div className="mt-4">
               <Button
                 variant="destructive"
                 onClick={() => {
@@ -1029,22 +983,6 @@ export const ProductImageSearch = () => {
           )}
         </DialogContent>
       </Dialog>
-
-      <style jsx>{`
-        @keyframes scan {
-          0% {
-            transform: translateY(-100%);
-            opacity: 0;
-          }
-          50% {
-            opacity: 1;
-          }
-          100% {
-            transform: translateY(100%);
-            opacity: 0;
-          }
-        }
-      `}</style>
     </div>
   );
 };
