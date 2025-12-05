@@ -1,10 +1,4 @@
-// ✅ ULTRA-FAST PARALLEL IMAGE EXTRACTION - ALL IMAGES AT ONCE
-
-// Global cache for maximum speed
-const imageExistsCache = new Map<string, boolean>();
-const cacheExpiry = 5 * 60 * 1000; // 5 minutes
-const cacheTimestamps = new Map<string, number>();
-
+// ✅ FIXED: Proper Promise timing + immediate cache warming
 const checkImageExists = async (url: string): Promise<boolean> => {
   const now = Date.now();
   
@@ -19,61 +13,43 @@ const checkImageExists = async (url: string): Promise<boolean> => {
   return new Promise((resolve) => {
     const img = new Image();
     const timeout = setTimeout(() => {
+      cleanup();
       imageExistsCache.set(url, false);
       cacheTimestamps.set(url, now);
       resolve(false);
-    }, 150); // Ultra-fast 150ms timeout
+    }, 200); // Increased to 200ms for reliability
+    
+    // ✅ FIX: Define handlers BEFORE setting src
+    const cleanup = () => {
+      clearTimeout(timeout);
+      img.onload = null;
+      img.onerror = null;
+    };
     
     img.onload = () => {
-      clearTimeout(timeout);
+      cleanup();
       imageExistsCache.set(url, true);
       cacheTimestamps.set(url, now);
       resolve(true);
     };
     
     img.onerror = () => {
-      clearTimeout(timeout);
+      cleanup();
       imageExistsCache.set(url, false);
       cacheTimestamps.set(url, now);
       resolve(false);
     };
     
+    // ✅ Set src LAST to avoid race condition
     img.src = url;
   });
 };
 
-const parseJiomartUrl = (url: string) => {
-  const regex = /https:\/\/www\.jiomart\.com\/images\/product\/(\d+x\d+|original)\/(\d+)\/([^\/]+)-(product-images|legal-images)-([^-]+)-p(\d+)-(\d+)-(\d+)\.jpg/;
-  const match = url.match(regex);
-  
-  if (!match) return null;
-  
-  return {
-    baseUrl: 'https://www.jiomart.com/images/product',
-    resolution: match[1],
-    productId: match[2],
-    name: match[3],
-    imageType: match[4] as 'product-images' | 'legal-images',
-    productCode: match[5],
-    pNumber: match[6],
-    index: parseInt(match[7]),
-    timestamp: match[8]
-  };
-};
-
-const buildImageUrl = (
-  parts: ReturnType<typeof parseJiomartUrl>,
-  imageType: 'product-images' | 'legal-images',
-  index: number,
-  resolution: string = 'original'
-): string => {
-  if (!parts) return '';
-  
-  return `${parts.baseUrl}/${resolution}/${parts.productId}/${parts.name}-${imageType}-${parts.productCode}-p${parts.pNumber}-${index}-${parts.timestamp}.jpg`;
-};
-
-// ✅ ULTRA-FAST: Check ALL images in parallel
-export const extractAllProductImages = async (firstImageUrl: string): Promise<string[]> => {
+// ✅ IMPROVED: Batch processing with progress tracking
+export const extractAllProductImages = async (
+  firstImageUrl: string,
+  onProgress?: (loaded: number, total: number) => void
+): Promise<string[]> => {
   const startTime = performance.now();
   const parts = parseJiomartUrl(firstImageUrl);
   
@@ -82,22 +58,20 @@ export const extractAllProductImages = async (firstImageUrl: string): Promise<st
     return [];
   }
 
-  const MAX_CHECKS = 25; // Check up to 25 images
+  const MAX_CHECKS = 25;
+  const BATCH_SIZE = 10; // Process in batches for better performance
   
-  // ✅ Generate ALL possible URLs at once
+  // Generate all URLs
   const allUrls: string[] = [];
   
-  // Product images (0-24)
   for (let i = 0; i < MAX_CHECKS; i++) {
     allUrls.push(buildImageUrl(parts, 'product-images', i));
   }
   
-  // Legal images (0-24)
   for (let i = 0; i < MAX_CHECKS; i++) {
     allUrls.push(buildImageUrl(parts, 'legal-images', i));
   }
   
-  // Fallback: Try pNumber variations for first 10 images
   const pNumberVariations = [
     parseInt(parts.pNumber) + 1,
     parseInt(parts.pNumber) - 1,
@@ -111,38 +85,46 @@ export const extractAllProductImages = async (firstImageUrl: string): Promise<st
     }
   }
 
-  // ✅ CHECK ALL URLS IN PARALLEL - Maximum speed!
-  const results = await Promise.all(
-    allUrls.map(async (url) => ({
-      url,
-      exists: await checkImageExists(url)
-    }))
-  );
+  // ✅ Process in batches to avoid overwhelming the browser
+  const validImages: string[] = [];
+  const totalUrls = allUrls.length;
+  
+  for (let i = 0; i < allUrls.length; i += BATCH_SIZE) {
+    const batch = allUrls.slice(i, i + BATCH_SIZE);
+    const results = await Promise.all(
+      batch.map(async (url) => ({
+        url,
+        exists: await checkImageExists(url)
+      }))
+    );
+    
+    const batchValid = results.filter(r => r.exists).map(r => r.url);
+    validImages.push(...batchValid);
+    
+    // Report progress
+    if (onProgress) {
+      onProgress(Math.min(i + BATCH_SIZE, totalUrls), totalUrls);
+    }
+  }
 
-  // Filter valid images
-  const validImages = results
-    .filter(r => r.exists)
-    .map(r => r.url);
-
-  // Remove duplicates
   const uniqueImages = [...new Set(validImages)];
   
   const processingTime = ((performance.now() - startTime) / 1000).toFixed(3);
-  console.log(`✅ Extracted ${uniqueImages.length} images in ${processingTime}s from ${firstImageUrl}`);
+  console.log(`✅ Extracted ${uniqueImages.length} images in ${processingTime}s`);
+  
+  // ✅ Immediately preload first 5 images for instant display
+  preloadImages(uniqueImages, 5);
   
   return uniqueImages;
 };
 
-// ✅ Preload images for instant display
+// ✅ IMPROVED: Aggressive preloading
 export const preloadImages = (urls: string[], priority: number = 12) => {
-  urls.slice(0, priority).forEach(url => {
-    const img = new Image();
-    img.src = url;
+  urls.slice(0, priority).forEach((url, index) => {
+    // Stagger slightly to avoid congestion
+    setTimeout(() => {
+      const img = new Image();
+      img.src = url;
+    }, index * 10);
   });
-};
-
-// ✅ Clear cache when needed
-export const clearImageCache = () => {
-  imageExistsCache.clear();
-  cacheTimestamps.clear();
 };
