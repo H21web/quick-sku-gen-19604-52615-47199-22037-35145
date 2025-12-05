@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
-import { Search, X, Scan, ExternalLink, History, Camera } from 'lucide-react';
+import { Search, X, Scan, ExternalLink, History, Camera, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
 import { toast } from 'sonner';
 import { extractAllProductImages, preloadImages } from '@/lib/imageExtractor';
@@ -187,15 +187,21 @@ export const ProductImageSearch = () => {
     });
   }, []);
 
-  // ✅ FIXED: Load ALL images progressively - including legal images
-  const loadRemainingImages = useCallback(async (links: string[], searchId: string) => {
+  // ✅ FIXED: Simultaneous loading with proper deduplication
+  const loadAllImagesSimultaneously = useCallback(async (links: string[], searchId: string) => {
     setIsAutoLoading(true);
     
-    // Process 2 links at a time for better speed
-    for (let i = 0; i < links.length; i += 2) {
+    // Process all links simultaneously in batches of 4
+    const batchSize = 4;
+    const batches: string[][] = [];
+    
+    for (let i = 0; i < links.length; i += batchSize) {
+      batches.push(links.slice(i, i + batchSize));
+    }
+    
+    for (const batch of batches) {
       if (searchId !== currentSearchIdRef.current) break;
       
-      const batch = links.slice(i, i + 2);
       const batchResults = await Promise.allSettled(
         batch.map(async (link) => {
           if (processedLinksRef.current.has(link)) return [];
@@ -224,6 +230,7 @@ export const ProductImageSearch = () => {
       if (newImages.length > 0 && searchId === currentSearchIdRef.current) {
         setExtractedImages(prev => {
           const combined = [...prev, ...newImages];
+          // Remove duplicates
           const unique = Array.from(new Set(combined));
           return [
             ...unique.filter(url => url.includes('/original/')),
@@ -232,8 +239,8 @@ export const ProductImageSearch = () => {
         });
       }
       
-      // Small delay between batches
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Minimal delay between batches
+      await new Promise(resolve => setTimeout(resolve, 50));
     }
     
     setIsAutoLoading(false);
@@ -300,44 +307,34 @@ export const ProductImageSearch = () => {
         return;
       }
 
-      // ✅ Load first 2 links immediately for faster initial display
-      const firstBatch = jiomartLinks.slice(0, 2);
-      const firstBatchResults = await Promise.all(
-        firstBatch.map(async (link) => {
-          try {
-            const images = await extractAllProductImages(link);
-            processedLinksRef.current.add(link);
-            return images;
-          } catch (error) {
-            processedLinksRef.current.add(link);
-            return [];
-          }
-        })
-      );
-      
-      const firstImages = firstBatchResults.flat();
-      
-      if (firstImages.length > 0) {
-        setExtractedImages(firstImages);
-        preloadImages(firstImages, 12);
+      // ✅ Load first link immediately for instant feedback
+      const firstLink = jiomartLinks[0];
+      try {
+        const firstImages = await extractAllProductImages(firstLink);
+        processedLinksRef.current.add(firstLink);
         
-        // Update history thumbnail
-        setTimeout(() => {
-          saveToHistory(idToSearch, foundUrl, firstImages[0]);
-        }, 300);
-        
-        toast.success(`${firstImages.length} images loaded!`);
-      } else {
-        toast.warning('Loading images...');
+        if (firstImages.length > 0) {
+          setExtractedImages(firstImages);
+          preloadImages(firstImages, 12);
+          
+          // Update history thumbnail
+          setTimeout(() => {
+            saveToHistory(idToSearch, foundUrl, firstImages[0]);
+          }, 200);
+        }
+      } catch (error) {
+        processedLinksRef.current.add(firstLink);
       }
 
-      // ✅ Auto-load remaining images progressively in background
-      const remainingLinks = jiomartLinks.slice(2);
+      // ✅ Load ALL remaining images simultaneously in background
+      const remainingLinks = jiomartLinks.slice(1);
       if (remainingLinks.length > 0) {
         setTimeout(() => {
-          loadRemainingImages(remainingLinks, newSearchId);
-        }, 300);
+          loadAllImagesSimultaneously(remainingLinks, newSearchId);
+        }, 200);
       }
+
+      toast.success('Images loading...');
 
     } catch (error: any) {
       console.error('Search error:', error);
@@ -349,7 +346,7 @@ export const ProductImageSearch = () => {
     } finally {
       setLoading(false);
     }
-  }, [productId, saveToHistory, getNextApiKey, markApiKeyExhausted, fetchWithRetry, loadRemainingImages]);
+  }, [productId, saveToHistory, getNextApiKey, markApiKeyExhausted, fetchWithRetry, loadAllImagesSimultaneously]);
 
   const startCamera = async () => {
     try {
@@ -408,7 +405,7 @@ export const ProductImageSearch = () => {
 
     setCapturedImage(imageData);
     
-    // ✅ Show scan animation
+    // Show scan animation
     setShowScanAnimation(true);
     setTimeout(() => setShowScanAnimation(false), 600);
 
@@ -523,7 +520,12 @@ export const ProductImageSearch = () => {
       if (uniqueIDs.length === 0) {
         toast.info('No product IDs detected');
       } else {
-        toast.success(`Found ${uniqueIDs.length} product ID(s)`);
+        // ✅ Automatically search the first detected ID
+        const firstID = uniqueIDs[0];
+        setProductId(firstID);
+        stopCamera();
+        toast.success(`Found ${uniqueIDs.length} ID(s). Searching: ${firstID}`);
+        setTimeout(() => handleSearch(firstID), 100);
       }
 
     } catch (error: any) {
@@ -541,7 +543,7 @@ export const ProductImageSearch = () => {
     setTimeout(() => handleSearch(id), 50);
   };
 
-  // ✅ Pan/Zoom handlers
+  // Pan/Zoom handlers
   const getTouchDistance = (touch1: Touch, touch2: Touch) => {
     const dx = touch1.clientX - touch2.clientX;
     const dy = touch1.clientY - touch2.clientY;
@@ -593,7 +595,6 @@ export const ProductImageSearch = () => {
       const deltaY = touch.clientY - swipeStartRef.current.y;
       const deltaTime = Date.now() - swipeStartRef.current.time;
 
-      // Swipe gesture detection
       if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 50 && deltaTime < 300) {
         if (deltaX > 0 && selectedImageIndex !== null && selectedImageIndex > 0) {
           setSelectedImageIndex(selectedImageIndex - 1);
@@ -639,6 +640,23 @@ export const ProductImageSearch = () => {
     setZoom(prev => Math.min(Math.max(prev + delta, 1), 5));
   };
 
+  // ✅ Arrow navigation for desktop
+  const goToPrevious = () => {
+    if (selectedImageIndex !== null && selectedImageIndex > 0) {
+      setSelectedImageIndex(selectedImageIndex - 1);
+      setZoom(1);
+      setPosition({ x: 0, y: 0 });
+    }
+  };
+
+  const goToNext = () => {
+    if (selectedImageIndex !== null && selectedImageIndex < extractedImages.length - 1) {
+      setSelectedImageIndex(selectedImageIndex + 1);
+      setZoom(1);
+      setPosition({ x: 0, y: 0 });
+    }
+  };
+
   useEffect(() => {
     if (zoom === 1) {
       setPosition({ x: 0, y: 0 });
@@ -661,11 +679,10 @@ export const ProductImageSearch = () => {
 
   return (
     <div className="w-full min-h-screen bg-background">
-      {/* ✅ Compact Header with Scan Icon Inside Search Bar */}
+      {/* Compact Header */}
       <div className="sticky top-0 z-40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b shadow-sm">
         <div className="max-w-7xl mx-auto px-4 py-3">
           <div className="flex items-center gap-3">
-            {/* Search Bar with Embedded Scan Icon */}
             <div className="relative flex-1">
               <Input
                 placeholder="Enter Product ID"
@@ -683,19 +700,17 @@ export const ProductImageSearch = () => {
               </button>
             </div>
             
-            {/* Search Button */}
             <Button onClick={() => handleSearch()} disabled={loading} className="h-11 px-6">
               <Search className="h-4 w-4 mr-2" />
               {loading ? 'Loading...' : 'Find'}
             </Button>
           </div>
           
-          {/* Secondary Actions Row */}
           <div className="flex items-center justify-between mt-3">
             <div className="text-sm text-muted-foreground">
               {extractedImages.length > 0 && (
                 <>
-                  {extractedImages.length} Images
+                  {extractedImages.length} Image{extractedImages.length !== 1 ? 's' : ''}
                   {isAutoLoading && <span className="ml-2 animate-pulse">(Loading more...)</span>}
                 </>
               )}
@@ -728,7 +743,6 @@ export const ProductImageSearch = () => {
 
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 py-4">
-        {/* Loading Skeletons */}
         {loading && (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
             {[...Array(10)].map((_, i) => (
@@ -737,7 +751,6 @@ export const ProductImageSearch = () => {
           </div>
         )}
 
-        {/* Images Grid */}
         {extractedImages.length > 0 && (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
             {extractedImages.map((url, index) => (
@@ -765,7 +778,7 @@ export const ProductImageSearch = () => {
         )}
       </div>
 
-      {/* ✅ FULLSCREEN SLIDESHOW with Pan/Zoom & Swipe */}
+      {/* Fullscreen Slideshow */}
       {selectedImageIndex !== null && (
         <div className="fixed inset-0 z-50 bg-black">
           <div
@@ -794,7 +807,7 @@ export const ProductImageSearch = () => {
             />
           </div>
 
-          {/* Transparent Close Button */}
+          {/* Close Button */}
           <button
             onClick={() => {
               setSelectedImageIndex(null);
@@ -806,7 +819,26 @@ export const ProductImageSearch = () => {
             <X className="h-6 w-6 text-white" />
           </button>
 
-          {/* Transparent Counter */}
+          {/* ✅ Arrow Buttons - Desktop Only */}
+          {!isMobile && selectedImageIndex > 0 && (
+            <button
+              onClick={goToPrevious}
+              className="absolute left-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-sm transition-all z-10"
+            >
+              <ChevronLeft className="h-8 w-8 text-white" />
+            </button>
+          )}
+
+          {!isMobile && selectedImageIndex < extractedImages.length - 1 && (
+            <button
+              onClick={goToNext}
+              className="absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-sm transition-all z-10"
+            >
+              <ChevronRight className="h-8 w-8 text-white" />
+            </button>
+          )}
+
+          {/* Counter */}
           <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-full bg-black/40 backdrop-blur-sm z-10">
             <span className="text-white text-sm font-medium">
               {selectedImageIndex + 1} / {extractedImages.length}
@@ -822,7 +854,7 @@ export const ProductImageSearch = () => {
         </div>
       )}
 
-      {/* ✅ FULLSCREEN OCR CAMERA DIALOG with Scan Animation */}
+      {/* Fullscreen OCR Camera Dialog */}
       <Dialog open={showCameraDialog} onOpenChange={(open) => !open && stopCamera()}>
         <DialogContent className="max-w-full max-h-full w-screen h-screen p-0 m-0 gap-0 border-0 rounded-none">
           <DialogTitle className="sr-only">Scan Product</DialogTitle>
@@ -839,10 +871,8 @@ export const ProductImageSearch = () => {
               />
               <canvas ref={canvasRef} className="hidden" />
               
-              {/* Scan Frame Overlay */}
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                 <div className="relative w-4/5 max-w-md aspect-[4/3]">
-                  {/* Corner brackets */}
                   <div className="absolute top-0 left-0 w-12 h-12 border-t-4 border-l-4 border-white rounded-tl-lg"></div>
                   <div className="absolute top-0 right-0 w-12 h-12 border-t-4 border-r-4 border-white rounded-tr-lg"></div>
                   <div className="absolute bottom-0 left-0 w-12 h-12 border-b-4 border-l-4 border-white rounded-bl-lg"></div>
@@ -850,14 +880,12 @@ export const ProductImageSearch = () => {
                 </div>
               </div>
               
-              {/* Instructions */}
               <div className="absolute top-8 left-0 right-0 text-center">
                 <p className="text-white text-sm font-medium bg-black/50 backdrop-blur-sm py-2 px-4 rounded-full inline-block">
                   Position product ID within frame
                 </p>
               </div>
               
-              {/* Close Button */}
               <button
                 onClick={stopCamera}
                 className="absolute top-4 right-4 p-3 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-sm transition-all"
@@ -865,7 +893,6 @@ export const ProductImageSearch = () => {
                 <X className="h-6 w-6 text-white" />
               </button>
               
-              {/* Floating Capture Button */}
               <div className="absolute bottom-8 left-1/2 -translate-x-1/2">
                 <button
                   onClick={captureImage}
@@ -877,11 +904,9 @@ export const ProductImageSearch = () => {
             </div>
           ) : (
             <div className="relative w-full h-full bg-black flex flex-col">
-              {/* Captured Image */}
               <div className="flex-1 relative overflow-hidden">
                 <img src={capturedImage} alt="Captured" className="w-full h-full object-contain" />
                 
-                {/* ✅ Minimal Scan Animation */}
                 {showScanAnimation && (
                   <div className="absolute inset-0 pointer-events-none">
                     <div className="absolute inset-0 bg-white/20 animate-[scan_0.6s_ease-in-out]"></div>
@@ -891,7 +916,6 @@ export const ProductImageSearch = () => {
               
               <canvas ref={canvasRef} className="hidden" />
 
-              {/* Close Button */}
               <button
                 onClick={stopCamera}
                 className="absolute top-4 right-4 p-3 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-sm transition-all z-10"
@@ -899,7 +923,6 @@ export const ProductImageSearch = () => {
                 <X className="h-6 w-6 text-white" />
               </button>
 
-              {/* Results Panel */}
               <div className="bg-background/95 backdrop-blur p-4 max-h-[50vh] overflow-y-auto">
                 {isProcessingOCR ? (
                   <div className="flex flex-col items-center justify-center py-8">
@@ -1007,7 +1030,6 @@ export const ProductImageSearch = () => {
         </DialogContent>
       </Dialog>
 
-      {/* ✅ Add CSS for scan animation */}
       <style jsx>{`
         @keyframes scan {
           0% {
