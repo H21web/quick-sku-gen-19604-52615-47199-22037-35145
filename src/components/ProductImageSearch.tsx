@@ -9,7 +9,6 @@ import { GOOGLE_SEARCH_ENGINE_ID } from '@/lib/config';
 import { Skeleton } from './ui/skeleton';
 
 const OCR_SPACE_API_KEY = 'K86120042088957';
-
 const GOOGLE_API_KEYS = [
   'AIzaSyCUb-RrSjsScT_gfhmdyOMVp3ZHSSsai1U',
   'AIzaSyDVvxwYZzZAOLy5Cd3FMNrQKcxZxldsJCY',
@@ -187,63 +186,46 @@ export const ProductImageSearch = () => {
     });
   }, []);
 
-  // âœ… FIXED: Simultaneous loading with proper deduplication
+  // ✅ FIXED: True progressive loading - no batches, immediate updates per link
   const loadAllImagesSimultaneously = useCallback(async (links: string[], searchId: string) => {
     setIsAutoLoading(true);
     
-    // Process all links simultaneously in batches of 4
-    const batchSize = 4;
-    const batches: string[][] = [];
-    
-    for (let i = 0; i < links.length; i += batchSize) {
-      batches.push(links.slice(i, i + batchSize));
-    }
-    
-    for (const batch of batches) {
-      if (searchId !== currentSearchIdRef.current) break;
+    const fetchLink = async (link: string) => {
+      if (searchId !== currentSearchIdRef.current) return;
+      if (processedLinksRef.current.has(link)) return;
       
-      const batchResults = await Promise.allSettled(
-        batch.map(async (link) => {
-          if (processedLinksRef.current.has(link)) return [];
-          
-          try {
-            const images = await Promise.race([
-              extractAllProductImages(link),
-              new Promise<string[]>((_, reject) =>
-                setTimeout(() => reject(new Error('timeout')), 3000)
-              )
-            ]);
-            
-            processedLinksRef.current.add(link);
-            return Array.isArray(images) ? images : [];
-          } catch (error) {
-            processedLinksRef.current.add(link);
-            return [];
-          }
-        })
-      );
-      
-      const newImages = batchResults
-        .filter(r => r.status === 'fulfilled')
-        .flatMap(r => r.value);
-      
-      if (newImages.length > 0 && searchId === currentSearchIdRef.current) {
-        setExtractedImages(prev => {
-          const combined = [...prev, ...newImages];
-          // Remove duplicates
-          const unique = Array.from(new Set(combined));
-          return [
-            ...unique.filter(url => url.includes('/original/')),
-            ...unique.filter(url => !url.includes('/original/'))
-          ];
-        });
+      processedLinksRef.current.add(link);
+
+      try {
+        const images = await Promise.race([
+          extractAllProductImages(link),
+          new Promise<string[]>((_, reject) =>
+            setTimeout(() => reject(new Error('timeout')), 5000)
+          )
+        ]);
+        
+        if (searchId === currentSearchIdRef.current && Array.isArray(images) && images.length > 0) {
+          setExtractedImages(prev => {
+            const combined = [...prev, ...images];
+            const unique = Array.from(new Set(combined));
+            // Keep originals sorted first
+            return [
+              ...unique.filter(url => url.includes('/original/')),
+              ...unique.filter(url => !url.includes('/original/'))
+            ];
+          });
+        }
+      } catch (error) {
+        // silently fail for individual links
       }
-      
-      // Minimal delay between batches
-      await new Promise(resolve => setTimeout(resolve, 50));
-    }
+    };
+
+    // Launch all requests in parallel immediately
+    await Promise.allSettled(links.map(link => fetchLink(link)));
     
-    setIsAutoLoading(false);
+    if (searchId === currentSearchIdRef.current) {
+      setIsAutoLoading(false);
+    }
   }, []);
 
   const handleSearch = useCallback(async (searchId?: string) => {
@@ -307,7 +289,7 @@ export const ProductImageSearch = () => {
         return;
       }
 
-      // âœ… Load first link immediately for instant feedback
+      // ✅ Load first link immediately for instant feedback
       const firstLink = jiomartLinks[0];
       try {
         const firstImages = await extractAllProductImages(firstLink);
@@ -326,15 +308,16 @@ export const ProductImageSearch = () => {
         processedLinksRef.current.add(firstLink);
       }
 
-      // âœ… Load ALL remaining images simultaneously in background
+      // ✅ Load ALL remaining images IMMEDIATELY (Progressive Loading)
+      // No timeout, no waiting. Just start fetching everything else.
       const remainingLinks = jiomartLinks.slice(1);
       if (remainingLinks.length > 0) {
-        setTimeout(() => {
-          loadAllImagesSimultaneously(remainingLinks, newSearchId);
-        }, 200);
+        loadAllImagesSimultaneously(remainingLinks, newSearchId);
       }
 
-      toast.success('Images loading...');
+      if (remainingLinks.length > 0) {
+        toast.success('Searching all sources...');
+      }
 
     } catch (error: any) {
       console.error('Search error:', error);
@@ -489,11 +472,11 @@ export const ProductImageSearch = () => {
         .replace(/[bB]/g, '8');
 
       const idPatterns = [
-        /ID\s*[:ï¼š.,-]?\s*(\d{5,})/gi,
-        /[1I]D\s*[:ï¼š.,-]?\s*(\d{5,})/gi,
-        /Product\s*[:ï¼š.,-]?\s*(\d{5,})/gi,
-        /Item\s*[:ï¼š.,-]?\s*(\d{5,})/gi,
-        /Code\s*[:ï¼š.,-]?\s*(\d{5,})/gi,
+        /ID\s*[:：.,-]?\s*(\d{5,})/gi,
+        /[1I]D\s*[:：.,-]?\s*(\d{5,})/gi,
+        /Product\s*[:：.,-]?\s*(\d{5,})/gi,
+        /Item\s*[:：.,-]?\s*(\d{5,})/gi,
+        /Code\s*[:：.,-]?\s*(\d{5,})/gi,
       ];
 
       for (const pattern of idPatterns) {
@@ -520,7 +503,7 @@ export const ProductImageSearch = () => {
       if (uniqueIDs.length === 0) {
         toast.info('No product IDs detected');
       } else {
-        // âœ… Automatically search the first detected ID
+        // ✅ Automatically search the first detected ID
         const firstID = uniqueIDs[0];
         setProductId(firstID);
         stopCamera();
@@ -640,7 +623,7 @@ export const ProductImageSearch = () => {
     setZoom(prev => Math.min(Math.max(prev + delta, 1), 5));
   };
 
-  // âœ… Arrow navigation for desktop
+  // ✅ Arrow navigation for desktop
   const goToPrevious = () => {
     if (selectedImageIndex !== null && selectedImageIndex > 0) {
       setSelectedImageIndex(selectedImageIndex - 1);
@@ -690,6 +673,8 @@ export const ProductImageSearch = () => {
                 onChange={(e) => setProductId(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                 className="h-11 pr-11"
+                inputMode="numeric"
+                pattern="[0-9]*"
               />
               <button
                 onClick={startCamera}
@@ -819,7 +804,7 @@ export const ProductImageSearch = () => {
             <X className="h-6 w-6 text-white" />
           </button>
 
-          {/* âœ… Arrow Buttons - Desktop Only */}
+          {/* ✅ Arrow Buttons - Desktop Only */}
           {!isMobile && selectedImageIndex > 0 && (
             <button
               onClick={goToPrevious}
