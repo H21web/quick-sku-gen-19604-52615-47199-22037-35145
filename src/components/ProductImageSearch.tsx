@@ -334,7 +334,7 @@ export const ProductImageSearch = () => {
         }, 200);
       }
 
-      toast.success('Images loading...');
+      toast.success('loading...');
 
     } catch (error: any) {
       console.error('Search error:', error);
