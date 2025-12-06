@@ -4,6 +4,7 @@ import { Button } from './ui/button';
 import { Search, X, Scan, ExternalLink, History, Camera, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle } from './ui/dialog';
 import { toast } from 'sonner';
+// Ensure you are using the optimized extractor provided in the previous step
 import { extractAllProductImages, preloadImages } from '@/lib/imageExtractor';
 import { GOOGLE_SEARCH_ENGINE_ID } from '@/lib/config';
 import { Skeleton } from './ui/skeleton';
@@ -32,8 +33,8 @@ interface ApiKeyStatus {
   lastReset: number;
 }
 
-// ✅ SMART COMPONENT: Handles loading state gracefully
-// Prevents layout shifts and broken image icons
+// ✅ 1. SMART IMAGE COMPONENT
+// Handles auto-triggering visibility and prevents layout shifts
 const FadeInImage = ({ src, index, onClick }: { src: string, index: number, onClick: () => void }) => {
   const [isLoaded, setIsLoaded] = useState(false);
   const [hasError, setHasError] = useState(false);
@@ -45,19 +46,22 @@ const FadeInImage = ({ src, index, onClick }: { src: string, index: number, onCl
       onClick={onClick}
       className="relative aspect-square border rounded-lg overflow-hidden bg-white cursor-pointer group shadow-sm hover:shadow-md transition-all"
     >
+      {/* Skeleton shows until image is fully loaded */}
       {!isLoaded && <Skeleton className="absolute inset-0 w-full h-full animate-pulse bg-gray-100" />}
       
       <img
         src={src}
         alt={`Product ${index + 1}`}
-        className={`w-full h-full object-contain p-2 transition-opacity duration-300 ${
-          isLoaded ? 'opacity-100' : 'opacity-0'
-        }`}
+        // ✅ Browser-native lazy loading
+        loading="lazy"
         onLoad={() => setIsLoaded(true)}
         onError={() => setHasError(true)}
-        loading="lazy"
+        className={`w-full h-full object-contain p-2 transition-opacity duration-300 ease-out ${
+          isLoaded ? 'opacity-100' : 'opacity-0'
+        }`}
       />
       
+      {/* Index badge (only visible when loaded) */}
       {isLoaded && (
         <div className="absolute top-1 left-1 bg-black/60 text-white text-[10px] px-1.5 py-0.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm">
           {index + 1}
@@ -73,7 +77,7 @@ export const ProductImageSearch = () => {
   const [loading, setLoading] = useState(false);
   const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
   
-  // Camera & OCR
+  // Camera & OCR States
   const [showCameraDialog, setShowCameraDialog] = useState(false);
   const [capturedImage, setCapturedImage] = useState<string | null>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
@@ -81,20 +85,19 @@ export const ProductImageSearch = () => {
   const [detectedIDs, setDetectedIDs] = useState<string[]>([]);
   const [showScanAnimation, setShowScanAnimation] = useState(false);
 
-  // Data
+  // Data States
   const [jiomartUrl, setJiomartUrl] = useState('');
   const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>([]);
   const [showHistoryDialog, setShowHistoryDialog] = useState(false);
   const [isAutoLoading, setIsAutoLoading] = useState(false);
 
-  // Zoom/Pan
+  // Pan/Zoom States
   const [zoom, setZoom] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   
   const touchStartRef = useRef<{ distance: number; zoom: number; x: number; y: number } | null>(null);
-  const swipeStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const currentSearchIdRef = useRef('');
@@ -114,7 +117,7 @@ export const ProductImageSearch = () => {
     }
   }, []);
 
-  // API Key Rotation Logic
+  // --- API Key Management (Same as before) ---
   const getNextApiKey = useCallback((): string | null => {
     const availableKeys = apiKeyStatuses.filter(k => !k.exhausted);
     if (availableKeys.length === 0) return null;
@@ -164,37 +167,50 @@ export const ProductImageSearch = () => {
     });
   }, []);
 
-  // ✅ PARALLEL LOADER: Executes immediately without delays
+  // ✅ 2. PROGRESSIVE AUTO-LOADER
+  // Updates the UI *immediately* when any image is found, instead of waiting for batches.
   const loadAllImagesSimultaneously = useCallback(async (links: string[], searchId: string) => {
     setIsAutoLoading(true);
-    // Process all links at once since our extract logic is now low-bandwidth
-    const batchResults = await Promise.allSettled(
-      links.map(async (link) => {
-        if (processedLinksRef.current.has(link)) return [];
-        try {
-          const images = await extractAllProductImages(link);
-          processedLinksRef.current.add(link);
-          return images;
-        } catch {
-          processedLinksRef.current.add(link);
-          return [];
-        }
-      })
-    );
-
-    if (searchId === currentSearchIdRef.current) {
-      const newImages = batchResults
-        .filter((r): r is PromiseFulfilledResult<string[]> => r.status === 'fulfilled')
-        .flatMap(r => r.value);
+    
+    // Fire all requests in parallel
+    const promises = links.map(async (link) => {
+      // Skip if we already checked this link in this session
+      if (processedLinksRef.current.has(link)) return;
       
-      if (newImages.length > 0) {
-        setExtractedImages(prev => {
-          const unique = Array.from(new Set([...prev, ...newImages]));
-          return [...unique.filter(u => u.includes('/original/')), ...unique.filter(u => !u.includes('/original/'))];
-        });
+      try {
+        processedLinksRef.current.add(link);
+        
+        // Use the fast extractor
+        const newImages = await extractAllProductImages(link);
+        
+        // Progressive Update: Update state as soon as THIS link finishes
+        if (newImages.length > 0 && searchId === currentSearchIdRef.current) {
+          setExtractedImages(prev => {
+            const combined = [...prev, ...newImages];
+            // Remove duplicates
+            const unique = Array.from(new Set(combined));
+            
+            // Sort high-res to top, maintain others
+            return [
+              ...unique.filter(u => u.includes('/original/')),
+              ...unique.filter(u => !u.includes('/original/'))
+            ];
+          });
+          
+          // Auto-trigger preload for these new images
+          preloadImages(newImages, 4);
+        }
+      } catch (e) {
+        console.error('Link extraction failed', link);
       }
+    });
+
+    // Wait for all to finish just to turn off the loading indicator
+    await Promise.allSettled(promises);
+    
+    if (searchId === currentSearchIdRef.current) {
+      setIsAutoLoading(false);
     }
-    setIsAutoLoading(false);
   }, []);
 
   const handleSearch = useCallback(async (searchId?: string) => {
@@ -204,6 +220,7 @@ export const ProductImageSearch = () => {
 
     const newSearchId = `${idToSearch}_${Date.now()}`;
     currentSearchIdRef.current = newSearchId;
+    
     setLoading(true);
     setExtractedImages([]);
     setJiomartUrl('');
@@ -234,19 +251,20 @@ export const ProductImageSearch = () => {
         return toast.error('No images found');
       }
 
-      // Fast Path: Process first link immediately
+      // ⚡ Step 1: Load FIRST link instantly for immediate feedback
       const firstLink = links[0];
       extractAllProductImages(firstLink).then(images => {
-        if (searchId !== currentSearchIdRef.current) return;
+        if (newSearchId !== currentSearchIdRef.current) return;
         processedLinksRef.current.add(firstLink);
+        
         if (images.length) {
           setExtractedImages(images);
-          preloadImages(images);
+          preloadImages(images, 8); // Preload more aggressively
           saveToHistory(idToSearch, undefined, images[0]);
         }
       });
 
-      // Background: Process rest immediately (non-blocking)
+      // ⚡ Step 2: Auto-load REST of the links in parallel (Progressive)
       if (links.length > 1) {
         loadAllImagesSimultaneously(links.slice(1), newSearchId);
       }
@@ -258,7 +276,7 @@ export const ProductImageSearch = () => {
     }
   }, [productId, saveToHistory, getNextApiKey, loadAllImagesSimultaneously]);
 
-  // UI Handlers
+  // --- Camera & UI Handlers ---
   const startCamera = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
@@ -323,22 +341,24 @@ export const ProductImageSearch = () => {
   return (
     <div className="flex flex-col h-screen bg-gray-50">
       {/* Header */}
-      <div className="bg-white border-b px-4 py-3 sticky top-0 z-30 shadow-sm">
+      <div className="bg-white border-b px-4 py-3 sticky top-0 z-30 shadow-sm safe-area-top">
         <div className="flex gap-2 max-w-4xl mx-auto">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-3 h-5 w-5 text-gray-400" />
+            {/* ✅ 3. NUMBER PAD ENABLED */}
             <Input
               value={productId}
               onChange={e => setProductId(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleSearch()}
               placeholder="Product ID"
-              className="pl-10 h-11 text-lg"
-              inputMode="numeric"
+              className="pl-10 pr-10 h-11 text-lg"
+              type="text" 
+              inputMode="numeric" 
               pattern="[0-9]*"
             />
-            {productId && <X onClick={() => setProductId('')} className="absolute right-3 top-3 h-5 w-5 text-gray-400" />}
+            {productId && <button onClick={() => setProductId('')} className="absolute right-3 top-3 p-1"><X className="h-5 w-5 text-gray-400" /></button>}
           </div>
-          <Button onClick={startCamera} variant="outline" size="icon" className="h-11 w-11"><Scan className="h-5 w-5" /></Button>
+          <Button onClick={startCamera} variant="outline" size="icon" className="h-11 w-11 shrink-0"><Scan className="h-5 w-5" /></Button>
           <Button onClick={() => handleSearch()} disabled={loading} className="h-11 px-6">{loading ? '...' : 'Find'}</Button>
         </div>
         
@@ -356,7 +376,7 @@ export const ProductImageSearch = () => {
         )}
       </div>
 
-      {/* Grid */}
+      {/* Grid Content */}
       <div className="flex-1 overflow-y-auto p-4">
         {loading && !extractedImages.length && (
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3 max-w-4xl mx-auto">
@@ -378,7 +398,9 @@ export const ProductImageSearch = () => {
       {/* Fullscreen Viewer */}
       {selectedImageIndex !== null && (
         <div className="fixed inset-0 z-50 bg-black flex items-center justify-center touch-none">
-          <X onClick={() => setSelectedImageIndex(null)} className="absolute top-4 right-4 text-white z-50 w-8 h-8 p-1 bg-black/50 rounded-full" />
+          <button onClick={() => setSelectedImageIndex(null)} className="absolute top-4 right-4 text-white z-50 p-2 bg-black/40 rounded-full backdrop-blur-sm">
+            <X className="w-6 h-6" />
+          </button>
           
           <div 
             className="relative w-full h-full flex items-center justify-center"
@@ -399,36 +421,55 @@ export const ProductImageSearch = () => {
               src={extractedImages[selectedImageIndex]} 
               className="max-w-full max-h-full object-contain transition-transform duration-100"
               style={{ transform: `scale(${zoom})` }}
+              alt="Fullscreen view"
             />
           </div>
           
-          <div className="absolute bottom-8 text-white bg-black/50 px-3 py-1 rounded-full text-sm">
+          <div className="absolute bottom-8 text-white bg-black/50 px-3 py-1 rounded-full text-sm backdrop-blur-sm">
             {selectedImageIndex + 1} / {extractedImages.length}
           </div>
           
-          {selectedImageIndex > 0 && <ChevronLeft onClick={() => setSelectedImageIndex(prev => prev! - 1)} className="absolute left-2 text-white w-10 h-10 p-2 bg-black/30 rounded-full" />}
-          {selectedImageIndex < extractedImages.length - 1 && <ChevronRight onClick={() => setSelectedImageIndex(prev => prev! + 1)} className="absolute right-2 text-white w-10 h-10 p-2 bg-black/30 rounded-full" />}
+          {!isMobile && selectedImageIndex > 0 && <button onClick={() => setSelectedImageIndex(prev => prev! - 1)} className="absolute left-4 text-white p-3 bg-black/30 rounded-full hover:bg-black/50"><ChevronLeft className="w-8 h-8" /></button>}
+          {!isMobile && selectedImageIndex < extractedImages.length - 1 && <button onClick={() => setSelectedImageIndex(prev => prev! + 1)} className="absolute right-4 text-white p-3 bg-black/30 rounded-full hover:bg-black/50"><ChevronRight className="w-8 h-8" /></button>}
         </div>
       )}
 
       {/* Camera Dialog */}
       <Dialog open={showCameraDialog} onOpenChange={o => !o && stopCamera()}>
-        <DialogContent className="p-0 h-[100dvh] sm:h-auto bg-black text-white border-none max-w-md">
-          <div className="relative flex-1 h-full flex items-center justify-center bg-black">
+        <DialogContent className="p-0 h-[100dvh] sm:h-auto bg-black text-white border-none max-w-md flex flex-col">
+          <div className="p-4 flex justify-between items-center bg-black/50 absolute top-0 w-full z-10">
+            <DialogTitle>Scan Product</DialogTitle>
+            <X onClick={stopCamera} className="w-6 h-6" />
+          </div>
+          <div className="relative flex-1 flex items-center justify-center bg-black overflow-hidden">
             {!capturedImage ? (
               <>
                 <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
-                <div className="absolute bottom-12 left-0 right-0 flex justify-center">
-                  <Button onClick={captureImage} className="h-20 w-20 rounded-full border-4 border-white bg-transparent" />
+                <div className="absolute inset-0 border-[40px] border-black/50 pointer-events-none">
+                  <div className="w-full h-full border-2 border-white/50" />
+                </div>
+                <div className="absolute bottom-12 left-0 right-0 flex justify-center z-20">
+                  <Button onClick={captureImage} className="h-20 w-20 rounded-full border-4 border-white bg-transparent hover:bg-white/20" />
                 </div>
               </>
             ) : (
-              <div className="relative w-full h-full">
-                <img src={capturedImage} className="w-full h-full object-contain" />
-                {showScanAnimation && <div className="absolute inset-0 bg-primary/20 animate-pulse" />}
-                <div className="absolute bottom-0 w-full p-4 bg-black/80 space-y-3">
-                  {isProcessingOCR ? <p className="text-center">Scanning ID...</p> : detectedIDs.length ? (
-                    detectedIDs.map(id => <Button key={id} onClick={() => { setProductId(id); stopCamera(); handleSearch(id); }} className="w-full mb-2">{id}</Button>)
+              <div className="relative w-full h-full flex flex-col">
+                <img src={capturedImage} className="w-full h-full object-contain flex-1" alt="Captured" />
+                {showScanAnimation && <div className="absolute inset-0 bg-primary/20 animate-scan" />}
+                <div className="p-4 bg-zinc-900 space-y-3 pb-8">
+                  {isProcessingOCR ? (
+                    <div className="text-center py-2 text-gray-300">Scanning ID...</div>
+                  ) : detectedIDs.length ? (
+                    <div className="space-y-2">
+                      <div className="text-sm text-gray-400">Detected:</div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {detectedIDs.map(id => (
+                          <Button key={id} onClick={() => { setProductId(id); stopCamera(); handleSearch(id); }} variant="secondary" className="justify-between">
+                            {id} <ChevronRight className="w-4 h-4 opacity-50" />
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
                   ) : (
                     <Button onClick={() => { setCapturedImage(null); startCamera(); }} variant="destructive" className="w-full">Retake</Button>
                   )}
@@ -442,19 +483,21 @@ export const ProductImageSearch = () => {
 
       {/* History Dialog */}
       <Dialog open={showHistoryDialog} onOpenChange={setShowHistoryDialog}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-md">
           <DialogTitle>History</DialogTitle>
           <div className="max-h-[60vh] overflow-y-auto space-y-2">
             {searchHistory.map(item => (
-              <div key={item.id} onClick={() => { setProductId(item.productId); setShowHistoryDialog(false); handleSearch(item.productId); }} className="flex items-center gap-3 p-2 hover:bg-gray-100 rounded border cursor-pointer">
-                 <img src={item.thumbnail || ''} className="w-10 h-10 object-cover bg-gray-200 rounded" />
+              <div key={item.id} onClick={() => { setProductId(item.productId); setShowHistoryDialog(false); handleSearch(item.productId); }} className="flex items-center gap-3 p-2 hover:bg-gray-100 rounded border cursor-pointer transition-colors">
+                 <div className="w-12 h-12 bg-gray-100 rounded flex-shrink-0 overflow-hidden">
+                   {item.thumbnail ? <img src={item.thumbnail} className="w-full h-full object-cover" /> : <Search className="w-5 h-5 m-auto text-gray-300 mt-3"/>}
+                 </div>
                  <div>
                    <div className="font-bold">{item.productId}</div>
                    <div className="text-xs text-gray-500">{new Date(item.timestamp).toLocaleDateString()}</div>
                  </div>
               </div>
             ))}
-            {searchHistory.length > 0 && <Button onClick={() => { setSearchHistory([]); localStorage.removeItem('searchHistory'); }} variant="ghost" className="w-full text-red-500">Clear</Button>}
+            {searchHistory.length > 0 && <Button onClick={() => { setSearchHistory([]); localStorage.removeItem('searchHistory'); }} variant="ghost" className="w-full text-red-500 hover:bg-red-50">Clear History</Button>}
           </div>
         </DialogContent>
       </Dialog>
