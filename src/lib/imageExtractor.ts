@@ -1,43 +1,52 @@
-// ✅ ULTRA-OPTIMIZED PARALLEL IMAGE EXTRACTION - MILLISECOND SPEED
+// lib/imageExtractor.ts
 
-// Global cache for maximum speed
+// Global cache to prevent re-checking known URLs (resets on refresh)
 const imageExistsCache = new Map<string, boolean>();
-const cacheExpiry = 5 * 60 * 1000; // 5 minutes
+const cacheExpiry = 10 * 60 * 1000; // 10 minutes cache
 const cacheTimestamps = new Map<string, number>();
 
+/**
+ * ULTRA-FAST CHECK: Checks if a thumbnail exists (~3KB)
+ * This avoids downloading the full ~2MB original image for validation.
+ */
 const checkImageExists = async (url: string): Promise<boolean> => {
   const now = Date.now();
   
-  // Check cache first
   if (imageExistsCache.has(url)) {
-    const cacheTime = cacheTimestamps.get(url) || 0;
-    if (now - cacheTime < cacheExpiry) {
+    if (now - (cacheTimestamps.get(url) || 0) < cacheExpiry) {
       return imageExistsCache.get(url)!;
     }
   }
 
   return new Promise((resolve) => {
     const img = new Image();
-    const timeout = setTimeout(() => {
-      imageExistsCache.set(url, false);
-      cacheTimestamps.set(url, now);
-      resolve(false);
-    }, 100); // Reduced to 100ms for faster rejection
     
-    img.onload = () => {
+    // Aggressive timeout: 400ms is plenty for a 3KB thumbnail even on 4G
+    const timeout = setTimeout(() => {
+      cleanup();
+      resolve(false); 
+    }, 400);
+
+    const cleanup = () => {
       clearTimeout(timeout);
+      img.onload = null;
+      img.onerror = null;
+    };
+
+    img.onload = () => {
+      cleanup();
       imageExistsCache.set(url, true);
       cacheTimestamps.set(url, now);
       resolve(true);
     };
-    
+
     img.onerror = () => {
-      clearTimeout(timeout);
+      cleanup();
       imageExistsCache.set(url, false);
       cacheTimestamps.set(url, now);
       resolve(false);
     };
-    
+
     img.src = url;
   });
 };
@@ -63,120 +72,55 @@ const parseJiomartUrl = (url: string) => {
 
 const buildImageUrl = (
   parts: ReturnType<typeof parseJiomartUrl>,
-  imageType: 'product-images' | 'legal-images',
   index: number,
-  resolution: string = 'original'
+  resolution: string
 ): string => {
   if (!parts) return '';
-  
-  return `${parts.baseUrl}/${resolution}/${parts.productId}/${parts.name}-${imageType}-${parts.productCode}-p${parts.pNumber}-${index}-${parts.timestamp}.jpg`;
+  return `${parts.baseUrl}/${resolution}/${parts.productId}/${parts.name}-${parts.imageType}-${parts.productCode}-p${parts.pNumber}-${index}-${parts.timestamp}.jpg`;
 };
 
-// ✅ INTELLIGENT TYPE DETECTION - Only check the type that exists
-const detectImageType = async (parts: ReturnType<typeof parseJiomartUrl>): Promise<'product-images' | 'legal-images'> => {
-  if (!parts) return 'product-images';
-  
-  // Use the type from the first image URL
-  return parts.imageType;
-};
-
-// ✅ ULTRA-FAST: Check only 16 images of detected type in parallel
+/**
+ * Main Extraction Function
+ * 1. Takes one valid image URL.
+ * 2. Generates candidate URLs for indices 0-11.
+ * 3. Checks the '150x150' thumbnail version of each (Speed Hack).
+ * 4. Returns the 'original' resolution URL for confirmed images.
+ */
 export const extractAllProductImages = async (firstImageUrl: string): Promise<string[]> => {
-  const startTime = performance.now();
   const parts = parseJiomartUrl(firstImageUrl);
-  
-  if (!parts) {
-    console.error('Invalid JioMart URL format');
-    return [];
-  }
+  if (!parts) return [];
 
-  const MAX_CHECKS = 16; // Check only 16 images
+  // Check first 12 indices (0-11)
+  const indicesToCheck = Array.from({ length: 12 }, (_, i) => i);
   
-  // ✅ Detect image type (product or legal)
-  const imageType = await detectImageType(parts);
-  
-  // ✅ Generate ONLY the relevant image type URLs
-  const allUrls: string[] = [];
-  
-  // Only check the detected type (product-images OR legal-images)
-  for (let i = 0; i < MAX_CHECKS; i++) {
-    allUrls.push(buildImageUrl(parts, imageType, i));
-  }
-  
-  // Optional: Try alternate pNumber only for first 5 images (faster fallback)
-  const pNumberVariations = [
-    parseInt(parts.pNumber) + 1,
-    parseInt(parts.pNumber) - 1,
-  ];
-  
-  for (const pNum of pNumberVariations) {
-    const modifiedParts = { ...parts, pNumber: pNum.toString() };
-    for (let i = 0; i < 5; i++) {
-      allUrls.push(buildImageUrl(modifiedParts, imageType, i));
-    }
-  }
-
-  // ✅ CHECK ALL URLS IN PARALLEL - Maximum speed!
-  const results = await Promise.all(
-    allUrls.map(async (url) => ({
-      url,
-      exists: await checkImageExists(url)
-    }))
-  );
-
-  // Filter valid images
-  const validImages = results
-    .filter(r => r.exists)
-    .map(r => r.url);
-
-  // Remove duplicates and maintain order
-  const uniqueImages = [...new Set(validImages)];
-  
-  const processingTime = ((performance.now() - startTime) / 1000).toFixed(3);
-  console.log(`✅ Extracted ${uniqueImages.length} ${imageType} in ${processingTime}s`);
-  
-  return uniqueImages;
-};
-
-// ✅ Aggressive preload for instant display
-export const preloadImages = (urls: string[], priority: number = 16) => {
-  // Preload all images immediately
-  urls.slice(0, priority).forEach((url, index) => {
-    const img = new Image();
-    img.src = url;
+  // Create parallel checks for THUMBNAILS (150x150)
+  const checkPromises = indicesToCheck.map(async (index) => {
+    const thumbUrl = buildImageUrl(parts, index, '150x150');
+    const exists = await checkImageExists(thumbUrl);
     
-    // Set loading priority
-    if (index < 4) {
-      img.loading = 'eager'; // First 4 images load immediately
-    } else {
-      img.loading = 'lazy';
+    if (exists) {
+      // If thumbnail exists, return the ORIGINAL high-res URL
+      return buildImageUrl(parts, index, 'original');
     }
+    return null;
   });
+
+  // Execute all checks simultaneously
+  const results = await Promise.all(checkPromises);
+  
+  // Filter valid URLs
+  const validImages = results.filter((url): url is string => url !== null);
+  
+  return [...new Set(validImages)]; // Remove duplicates
 };
 
-// ✅ Batch preload for even faster performance
-export const batchPreloadImages = (urls: string[]) => {
-  // Split into chunks for parallel processing
-  const chunkSize = 4;
-  const chunks = [];
-  
-  for (let i = 0; i < urls.length; i += chunkSize) {
-    chunks.push(urls.slice(i, i + chunkSize));
-  }
-  
-  // Load each chunk in parallel
-  chunks.forEach((chunk, chunkIndex) => {
-    setTimeout(() => {
-      chunk.forEach(url => {
-        const img = new Image();
-        img.src = url;
-      });
-    }, chunkIndex * 50); // Stagger by 50ms per chunk
+export const preloadImages = (urls: string[], count = 4) => {
+  if (!urls?.length) return;
+  urls.slice(0, count).forEach(url => {
+    const link = document.createElement('link');
+    link.rel = 'preload';
+    link.as = 'image';
+    link.href = url;
+    document.head.appendChild(link);
   });
-};
-
-// ✅ Clear cache when needed
-export const clearImageCache = () => {
-  imageExistsCache.clear();
-  cacheTimestamps.clear();
 };
