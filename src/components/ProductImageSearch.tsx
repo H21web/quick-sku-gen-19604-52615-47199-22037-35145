@@ -30,19 +30,18 @@ interface ApiKeyStatus {
   lastReset: number;
 }
 
-// ==================== SIMPLE & CORRECT IMAGE EXTRACTOR ====================
-// Takes first Google image URL as template, changes only the type and index
+// ==================== ULTRA-FAST IMAGE EXTRACTOR ====================
+// Extracts ALL images in parallel with smart logic
 const extractAllProductImages = async (firstImageUrl: string): Promise<string[]> => {
-  const validImages: string[] = [];
   
-  // Check if image exists
+  // Fast image existence check
   const checkImage = (url: string): Promise<string | null> => {
     return new Promise((resolve) => {
       const img = new Image();
       const timeout = setTimeout(() => {
         img.src = '';
         resolve(null);
-      }, 400);
+      }, 350);
       
       img.onload = () => {
         clearTimeout(timeout);
@@ -58,8 +57,7 @@ const extractAllProductImages = async (firstImageUrl: string): Promise<string[]>
     });
   };
 
-  // Extract pattern from first image URL
-  // Example: https://www.jiomart.com/images/product/original/490008739/parle-g-original-glucose-biscuits-800-g-product-images-o490008739-p490008739-0-202203170454.jpg
+  // Parse URL pattern
   const regex = /^(.+\/)([^\/]+)-(product-images|legal-images)-(.+)-(\d+)-(\d+)\.jpg(.*)$/;
   const match = firstImageUrl.match(regex);
   
@@ -68,22 +66,45 @@ const extractAllProductImages = async (firstImageUrl: string): Promise<string[]>
     return [];
   }
 
-  const [, baseUrl, slug, , suffix, , timestamp, query] = match;
+  const [, baseUrl, slug, , suffix, indexStr, timestamp, query] = match;
   
-  // Template format: baseUrl + slug + -{type}- + suffix + -{index}- + timestamp + .jpg + query
-  const buildUrl = (type: 'product-images' | 'legal-images', index: number): string => {
-    return `${baseUrl}${slug}-${type}-${suffix}-${index}-${timestamp}.jpg${query || ''}`;
+  // Build URL helper
+  const buildUrl = (type: 'product-images' | 'legal-images', index: number, ts: string): string => {
+    return `${baseUrl}${slug}-${type}-${suffix}-${index}-${ts}.jpg${query || ''}`;
   };
 
   const checkPromises: Promise<string | null>[] = [];
 
-  // Check both product-images and legal-images with indexes 0-50
-  for (let i = 0; i < 50; i++) {
-    checkPromises.push(checkImage(buildUrl('product-images', i)));
-    checkPromises.push(checkImage(buildUrl('legal-images', i)));
+  // PRODUCT IMAGES: Check 0-8
+  for (let i = 0; i <= 8; i++) {
+    checkPromises.push(checkImage(buildUrl('product-images', i, timestamp)));
   }
 
+  // LEGAL IMAGES: Check 2-15
+  for (let i = 2; i <= 15; i++) {
+    checkPromises.push(checkImage(buildUrl('legal-images', i, timestamp)));
+  }
+
+  // Try incrementing last digit of timestamp (for variations)
+  const tsInt = parseInt(timestamp);
+  for (let offset = 1; offset <= 3; offset++) {
+    const newTs = (tsInt + offset).toString();
+    
+    // Check product-images 0-8 with new timestamp
+    for (let i = 0; i <= 8; i++) {
+      checkPromises.push(checkImage(buildUrl('product-images', i, newTs)));
+    }
+    
+    // Check legal-images 2-15 with new timestamp
+    for (let i = 2; i <= 15; i++) {
+      checkPromises.push(checkImage(buildUrl('legal-images', i, newTs)));
+    }
+  }
+
+  // Execute ALL checks in parallel
   const results = await Promise.all(checkPromises);
+  
+  // Filter valid images and remove duplicates
   const uniqueImages = new Set(results.filter((url): url is string => url !== null));
   
   return Array.from(uniqueImages);
@@ -259,7 +280,6 @@ export const ProductImageSearch = () => {
     try {
       const query = `site:jiomart.com ${idToSearch}`;
       
-      // Get product URL and first image from Google
       const [webResponse, imageResponse] = await Promise.all([
         fetchWithRetry((apiKey) =>
           `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&num=1&fields=items(link)`
@@ -274,14 +294,12 @@ export const ProductImageSearch = () => {
         imageResponse.json()
       ]);
 
-      // Get JioMart product URL
       let foundUrl = '';
       if (webData.items?.[0]?.link?.includes('jiomart.com')) {
         foundUrl = webData.items[0].link;
         setJiomartUrl(foundUrl);
       }
 
-      // Get FIRST image URL from Google - use it as template
       const firstImageUrl = imageData.items?.find((item: any) => 
         item.link?.includes('jiomart.com/images/product/original')
       )?.link;
@@ -292,7 +310,7 @@ export const ProductImageSearch = () => {
         return;
       }
 
-      // Extract ALL images using the first image as template
+      // Extract ALL images using smart parallel logic
       const images = await extractAllProductImages(firstImageUrl);
       
       if (images.length > 0) {
@@ -589,7 +607,6 @@ export const ProductImageSearch = () => {
   return (
     <div className="min-h-screen bg-gray-50 p-3 pb-safe">
       <div className="max-w-6xl mx-auto space-y-3">
-        {/* Header */}
         <div className="bg-white rounded-xl shadow-sm p-4 border border-gray-200">
           <div className="flex gap-2">
             <div className="relative flex-1">
@@ -775,7 +792,6 @@ export const ProductImageSearch = () => {
           </div>
         )}
 
-        {/* OCR Camera Dialog */}
         <Dialog open={showCameraDialog} onOpenChange={(open) => !open && stopCamera()}>
           <DialogContent className="max-w-lg p-0 bg-gradient-to-b from-gray-900 to-black rounded-2xl overflow-hidden border-0">
             {!capturedImage ? (
@@ -894,7 +910,6 @@ export const ProductImageSearch = () => {
           </DialogContent>
         </Dialog>
 
-        {/* History Dialog */}
         <Dialog open={showHistoryDialog} onOpenChange={setShowHistoryDialog}>
           <DialogContent className="max-w-md bg-white rounded-2xl">
             <div className="border-b border-gray-200 pb-4">
