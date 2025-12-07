@@ -79,10 +79,13 @@ export const ProductImageSearch = () => {
         (r.status === 'fulfilled' ? r.value : [])
       );
 
-      // Combine all unique images
-      const allImages = Array.from(new Set([...initialUnique, ...allExtractedImages]));
-      setExtractedImages(allImages);
-      toast.success(`Found ${allImages.length} images`);
+      // Only use high-quality extracted images, remove duplicates
+      const highQualityImages = Array.from(new Set(allExtractedImages.filter(url => 
+        url.includes('/original/')
+      )));
+      
+      setExtractedImages(highQualityImages);
+      toast.success(`Found ${highQualityImages.length} images`);
     } catch (error) {
       toast.error('Failed to fetch product images');
       console.error('Error:', error);
