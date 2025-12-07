@@ -30,19 +30,19 @@ interface ApiKeyStatus {
   lastReset: number;
 }
 
-// ==================== CORRECT IMAGE EXTRACTOR ====================
-// Pattern: https://www.jiomart.com/images/product/original/{ID}/{slug}-{type}-o{ID}-p{ID}-{index}-{timestamp}.jpg
-const extractAllProductImages = async (productId: string, sampleUrl?: string): Promise<string[]> => {
+// ==================== SIMPLE & CORRECT IMAGE EXTRACTOR ====================
+// Takes first Google image URL as template, changes only the type and index
+const extractAllProductImages = async (firstImageUrl: string): Promise<string[]> => {
   const validImages: string[] = [];
   
-  // Helper to check if image exists
+  // Check if image exists
   const checkImage = (url: string): Promise<string | null> => {
     return new Promise((resolve) => {
       const img = new Image();
       const timeout = setTimeout(() => {
         img.src = '';
         resolve(null);
-      }, 500);
+      }, 400);
       
       img.onload = () => {
         clearTimeout(timeout);
@@ -58,57 +58,29 @@ const extractAllProductImages = async (productId: string, sampleUrl?: string): P
     });
   };
 
-  // Extract pattern from sample URL
-  let slug = '';
-  let timestamp = '';
+  // Extract pattern from first image URL
+  // Example: https://www.jiomart.com/images/product/original/490008739/parle-g-original-glucose-biscuits-800-g-product-images-o490008739-p490008739-0-202203170454.jpg
+  const regex = /^(.+\/)([^\/]+)-(product-images|legal-images)-(.+)-(\d+)-(\d+)\.jpg(.*)$/;
+  const match = firstImageUrl.match(regex);
   
-  if (sampleUrl) {
-    // Example: parle-g-original-glucose-biscuits-800-g-product-images-o490008739-p490008739-0-202203170454.jpg
-    const match = sampleUrl.match(/\/([^\/]+)-(product-images|legal-images)-o\d+-p\d+-\d+-(\d+)\.jpg/);
-    if (match) {
-      slug = match[1];
-      timestamp = match[3];
-    }
+  if (!match) {
+    console.error('Invalid URL format:', firstImageUrl);
+    return [];
   }
+
+  const [, baseUrl, slug, , suffix, , timestamp, query] = match;
+  
+  // Template format: baseUrl + slug + -{type}- + suffix + -{index}- + timestamp + .jpg + query
+  const buildUrl = (type: 'product-images' | 'legal-images', index: number): string => {
+    return `${baseUrl}${slug}-${type}-${suffix}-${index}-${timestamp}.jpg${query || ''}`;
+  };
 
   const checkPromises: Promise<string | null>[] = [];
 
-  if (slug && timestamp) {
-    // Pattern found - use exact format
-    for (let i = 0; i < 50; i++) {
-      checkPromises.push(
-        checkImage(`https://www.jiomart.com/images/product/original/${productId}/${slug}-product-images-o${productId}-p${productId}-${i}-${timestamp}.jpg`)
-      );
-      checkPromises.push(
-        checkImage(`https://www.jiomart.com/images/product/original/${productId}/${slug}-legal-images-o${productId}-p${productId}-${i}-${timestamp}.jpg`)
-      );
-    }
-  } else {
-    // Fallback: Try common patterns
-    const commonSlugs = ['product', 'item', productId];
-    const currentYear = new Date().getFullYear();
-    const timestamps = [];
-    
-    // Generate possible timestamps (last 3 years)
-    for (let year = currentYear; year >= currentYear - 3; year--) {
-      for (let month = 1; month <= 12; month++) {
-        for (let day = 1; day <= 28; day += 7) {
-          const m = String(month).padStart(2, '0');
-          const d = String(day).padStart(2, '0');
-          timestamps.push(`${year}${m}${d}0000`);
-        }
-      }
-    }
-
-    for (const ts of timestamps.slice(0, 10)) {
-      for (const s of commonSlugs) {
-        for (let i = 0; i < 5; i++) {
-          checkPromises.push(
-            checkImage(`https://www.jiomart.com/images/product/original/${productId}/${s}-product-images-o${productId}-p${productId}-${i}-${ts}.jpg`)
-          );
-        }
-      }
-    }
+  // Check both product-images and legal-images with indexes 0-50
+  for (let i = 0; i < 50; i++) {
+    checkPromises.push(checkImage(buildUrl('product-images', i)));
+    checkPromises.push(checkImage(buildUrl('legal-images', i)));
   }
 
   const results = await Promise.all(checkPromises);
@@ -287,12 +259,13 @@ export const ProductImageSearch = () => {
     try {
       const query = `site:jiomart.com ${idToSearch}`;
       
+      // Get product URL and first image from Google
       const [webResponse, imageResponse] = await Promise.all([
         fetchWithRetry((apiKey) =>
           `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&num=1&fields=items(link)`
         ),
         fetchWithRetry((apiKey) =>
-          `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&searchType=image&num=5&fields=items(link)`
+          `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&searchType=image&num=1&fields=items(link)`
         )
       ]);
 
@@ -301,18 +274,26 @@ export const ProductImageSearch = () => {
         imageResponse.json()
       ]);
 
+      // Get JioMart product URL
       let foundUrl = '';
       if (webData.items?.[0]?.link?.includes('jiomart.com')) {
         foundUrl = webData.items[0].link;
         setJiomartUrl(foundUrl);
       }
 
-      // Get sample image URL to extract pattern
-      const sampleImageUrl = imageData.items?.find((item: any) => 
+      // Get FIRST image URL from Google - use it as template
+      const firstImageUrl = imageData.items?.find((item: any) => 
         item.link?.includes('jiomart.com/images/product/original')
       )?.link;
 
-      const images = await extractAllProductImages(idToSearch, sampleImageUrl);
+      if (!firstImageUrl) {
+        toast.error('No product images found');
+        setLoading(false);
+        return;
+      }
+
+      // Extract ALL images using the first image as template
+      const images = await extractAllProductImages(firstImageUrl);
       
       if (images.length > 0) {
         setExtractedImages(images);
@@ -794,7 +775,7 @@ export const ProductImageSearch = () => {
           </div>
         )}
 
-        {/* REDESIGNED OCR CAMERA DIALOG */}
+        {/* OCR Camera Dialog */}
         <Dialog open={showCameraDialog} onOpenChange={(open) => !open && stopCamera()}>
           <DialogContent className="max-w-lg p-0 bg-gradient-to-b from-gray-900 to-black rounded-2xl overflow-hidden border-0">
             {!capturedImage ? (
@@ -808,23 +789,19 @@ export const ProductImageSearch = () => {
                     className="w-full h-full object-cover" 
                   />
                   
-                  {/* Scan Frame Overlay */}
                   <div className="absolute inset-0 flex items-center justify-center">
                     <div className="relative w-[85%] h-[60%]">
-                      {/* Corner Brackets */}
                       <div className="absolute top-0 left-0 w-12 h-12 border-t-4 border-l-4 border-blue-500 rounded-tl-2xl"></div>
                       <div className="absolute top-0 right-0 w-12 h-12 border-t-4 border-r-4 border-blue-500 rounded-tr-2xl"></div>
                       <div className="absolute bottom-0 left-0 w-12 h-12 border-b-4 border-l-4 border-blue-500 rounded-bl-2xl"></div>
                       <div className="absolute bottom-0 right-0 w-12 h-12 border-b-4 border-r-4 border-blue-500 rounded-br-2xl"></div>
                       
-                      {/* Scanning Line Animation */}
                       <div className="absolute inset-0 overflow-hidden">
                         <div className="absolute w-full h-1 bg-gradient-to-r from-transparent via-blue-500 to-transparent animate-scan-line"></div>
                       </div>
                     </div>
                   </div>
 
-                  {/* Instructions */}
                   <div className="absolute top-6 left-0 right-0 px-6">
                     <div className="bg-black/60 backdrop-blur-md rounded-xl p-4 border border-white/10">
                       <div className="flex items-start gap-3">
@@ -837,7 +814,6 @@ export const ProductImageSearch = () => {
                     </div>
                   </div>
 
-                  {/* Capture Button */}
                   <div className="absolute bottom-0 left-0 right-0 p-6">
                     <Button 
                       onClick={captureImage} 
