@@ -1,7 +1,7 @@
 const checkImageExists = async (url: string): Promise<boolean> => {
   return new Promise((resolve) => {
     const img = new Image();
-    const timeout = setTimeout(() => resolve(false), 300); // Fast 300ms timeout
+    const timeout = setTimeout(() => resolve(false), 2500); // Increased timeout to 2500ms for better reliability
     img.onload = () => {
       clearTimeout(timeout);
       resolve(true);
@@ -17,9 +17,9 @@ const checkImageExists = async (url: string): Promise<boolean> => {
 const parseJiomartUrl = (url: string) => {
   const regex = /https:\/\/www\.jiomart\.com\/images\/product\/(\d+x\d+|original)\/(\d+)\/([^\/]+)-(product-images|legal-images)-([^-]+)-p(\d+)-(\d+)-(\d+)\.jpg/;
   const match = url.match(regex);
-  
+
   if (!match) return null;
-  
+
   return {
     baseUrl: 'https://www.jiomart.com/images/product',
     resolution: match[1],
@@ -39,25 +39,26 @@ const buildImageUrl = (
   index: number
 ): string => {
   if (!parts) return '';
-  
+
   return `${parts.baseUrl}/original/${parts.productId}/${parts.name}-${imageType}-${parts.productCode}-p${parts.pNumber}-${index}-${parts.timestamp}.jpg`;
 };
 
 export const extractAllProductImages = async (firstImageUrl: string): Promise<string[]> => {
   const parts = parseJiomartUrl(firstImageUrl);
-  
+
   if (!parts) {
-    console.error('Invalid JioMart URL format');
-    return [];
+    console.warn('Invalid JioMart URL format, returning original URL as fallback');
+    const exists = await checkImageExists(firstImageUrl);
+    return exists ? [firstImageUrl] : [];
   }
 
   const MAX_CHECKS = 15; // Increased for more coverage
-  
+
   // Create all URLs to check in parallel
-  const productUrls = Array.from({ length: MAX_CHECKS }, (_, i) => 
+  const productUrls = Array.from({ length: MAX_CHECKS }, (_, i) =>
     buildImageUrl(parts, 'product-images', i)
   );
-  const legalUrls = Array.from({ length: MAX_CHECKS }, (_, i) => 
+  const legalUrls = Array.from({ length: MAX_CHECKS }, (_, i) =>
     buildImageUrl(parts, 'legal-images', i)
   );
 
@@ -75,7 +76,7 @@ export const extractAllProductImages = async (firstImageUrl: string): Promise<st
   // Quick fallback: try incrementing pNumber if no images found
   if (validImages.length === 0) {
     const modifiedParts = { ...parts, pNumber: (parseInt(parts.pNumber) + 1).toString() };
-    const fallbackUrls = Array.from({ length: 8 }, (_, i) => 
+    const fallbackUrls = Array.from({ length: 8 }, (_, i) =>
       buildImageUrl(modifiedParts, 'product-images', i)
     );
     const fallbackResults = await Promise.all(
@@ -84,5 +85,23 @@ export const extractAllProductImages = async (firstImageUrl: string): Promise<st
     validImages.push(...fallbackResults.filter(r => r.exists).map(r => r.url));
   }
 
+  // Ensure the original image is included if we found other images but missed the original for some reason
+  if (validImages.length > 0 && !validImages.includes(firstImageUrl)) {
+    const exists = await checkImageExists(firstImageUrl);
+    if (exists) validImages.unshift(firstImageUrl);
+  } else if (validImages.length === 0) {
+    // If all extraction attempts failed, try to return just the original image
+    const exists = await checkImageExists(firstImageUrl);
+    if (exists) validImages.push(firstImageUrl);
+  }
+
   return validImages;
+};
+
+export const preloadImages = (urls: string[], limit: number = 20) => {
+  const urlsToPreload = limit > 0 ? urls.slice(0, limit) : urls;
+  urlsToPreload.forEach((url) => {
+    const img = new Image();
+    img.src = url;
+  });
 };
