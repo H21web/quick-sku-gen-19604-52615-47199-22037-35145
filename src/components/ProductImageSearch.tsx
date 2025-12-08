@@ -7,7 +7,6 @@ import { toast } from 'sonner';
 import { extractAllProductImages, preloadImages } from '@/lib/imageExtractor';
 import { GOOGLE_SEARCH_ENGINE_ID } from '@/lib/config';
 import { Skeleton } from './ui/skeleton';
-import { Progress } from './ui/progress';
 
 const OCR_SPACE_API_KEY = 'K86120042088957';
 
@@ -33,6 +32,38 @@ interface ApiKeyStatus {
   exhausted: boolean;
   lastReset: number;
 }
+
+const CircularProgress = ({ value, size = 18, strokeWidth = 2.5 }: { value: number; size?: number; strokeWidth?: number }) => {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = radius * 2 * Math.PI;
+  const offset = circumference - (value / 100) * circumference;
+
+  return (
+    <svg width={size} height={size} className="-rotate-90 text-primary">
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        stroke="currentColor"
+        strokeWidth={strokeWidth}
+        fill="transparent"
+        className="text-muted/20"
+      />
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={radius}
+        stroke="currentColor"
+        strokeWidth={strokeWidth}
+        fill="transparent"
+        strokeDasharray={circumference}
+        strokeDashoffset={offset}
+        className="text-primary transition-all duration-300 ease-in-out"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+};
 
 export const ProductImageSearch = () => {
   const [productId, setProductId] = useState('');
@@ -717,19 +748,15 @@ export const ProductImageSearch = () => {
           </div>
 
           <div className="flex items-center justify-between mt-3">
-            <div className="text-sm text-muted-foreground min-w-[240px]">
+            <div className="text-sm text-muted-foreground">
               {extractedImages.length > 0 && (
-                <div className="flex flex-col gap-2">
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="font-medium">{extractedImages.length} Found</span>
-                    {isAutoLoading && (
-                      <span className="text-muted-foreground">
-                        {processedCount}/{totalToProcess} Processed
-                      </span>
-                    )}
-                  </div>
-                  {isAutoLoading && totalToProcess > 0 && (
-                    <Progress value={(processedCount / totalToProcess) * 100} className="h-1.5" />
+                <div className="flex items-center gap-3">
+                  <span className="font-medium tabular-nums">{extractedImages.length} Image{extractedImages.length !== 1 ? 's' : ''}</span>
+                  {isAutoLoading && (
+                    <div className="flex items-center gap-2 text-xs bg-accent/50 px-2.5 py-1 rounded-full border">
+                      <CircularProgress value={totalToProcess > 0 ? (processedCount / totalToProcess) * 100 : 0} />
+                      <span className="font-medium tabular-nums">{processedCount}/{totalToProcess}</span>
+                    </div>
                   )}
                 </div>
               )}
