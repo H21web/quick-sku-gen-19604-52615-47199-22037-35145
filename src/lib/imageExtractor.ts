@@ -1,7 +1,7 @@
 const checkImageExists = async (url: string): Promise<boolean> => {
   return new Promise((resolve) => {
     const img = new Image();
-    const timeout = setTimeout(() => resolve(false), 2500); // Increased timeout to 2500ms for better reliability
+    const timeout = setTimeout(() => resolve(false), 4000); // Increased timeout to 4000ms for better reliability
     img.onload = () => {
       clearTimeout(timeout);
       resolve(true);

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
-import { Search, X, Scan, ExternalLink, History, Camera, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, X, Scan, ExternalLink, History, Camera, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
 import { toast } from 'sonner';
 import { extractAllProductImages, preloadImages } from '@/lib/imageExtractor';
@@ -230,12 +230,9 @@ export const ProductImageSearch = () => {
       if (newImages.length > 0 && searchId === currentSearchIdRef.current) {
         setExtractedImages(prev => {
           const combined = [...prev, ...newImages];
-          // Remove duplicates
+          // Remove duplicates and enforce original quality
           const unique = Array.from(new Set(combined));
-          return [
-            ...unique.filter(url => url.includes('/original/')),
-            ...unique.filter(url => !url.includes('/original/'))
-          ];
+          return unique.filter(url => url.includes('/original/'));
         });
       }
 
@@ -314,13 +311,18 @@ export const ProductImageSearch = () => {
         processedLinksRef.current.add(firstLink);
 
         if (firstImages.length > 0) {
-          setExtractedImages(firstImages);
-          preloadImages(firstImages, 12);
+          // Filter for original images only
+          const originalImages = firstImages.filter(url => url.includes('/original/'));
 
-          // Update history thumbnail
-          setTimeout(() => {
-            saveToHistory(idToSearch, foundUrl, firstImages[0]);
-          }, 200);
+          if (originalImages.length > 0) {
+            setExtractedImages(originalImages);
+            preloadImages(originalImages, 12);
+
+            // Update history thumbnail
+            setTimeout(() => {
+              saveToHistory(idToSearch, foundUrl, originalImages[0]);
+            }, 200);
+          }
         }
       } catch (error) {
         processedLinksRef.current.add(firstLink);
@@ -743,11 +745,10 @@ export const ProductImageSearch = () => {
 
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 py-4">
-        {loading && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-            {[...Array(10)].map((_, i) => (
-              <Skeleton key={i} className="aspect-square rounded-lg" />
-            ))}
+        {(loading || (extractedImages.length === 0 && isAutoLoading)) && (
+          <div className="flex flex-col items-center justify-center py-12">
+            <Loader2 className="h-10 w-10 animate-spin text-primary mb-4" />
+            <p className="text-muted-foreground animate-pulse">Searching for high-quality images...</p>
           </div>
         )}
 
