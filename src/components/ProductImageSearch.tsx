@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
 import { Search, X, Scan, ExternalLink, History, Camera, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { extractAllProductImages, preloadImages } from '@/lib/imageExtractor';
 import { GOOGLE_SEARCH_ENGINE_ID } from '@/lib/config';
 import { Skeleton } from './ui/skeleton';
+import { Progress } from './ui/progress';
 
 const OCR_SPACE_API_KEY = 'K86120042088957';
 
@@ -64,6 +65,8 @@ export const ProductImageSearch = () => {
   const [apiKeyStatuses, setApiKeyStatuses] = useState<ApiKeyStatus[]>(() =>
     GOOGLE_API_KEYS.map(key => ({ key, exhausted: false, lastReset: Date.now() }))
   );
+  const [totalToProcess, setTotalToProcess] = useState(0);
+  const [processedCount, setProcessedCount] = useState(0);
   const currentKeyIndexRef = useRef(0);
   const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
@@ -238,6 +241,7 @@ export const ProductImageSearch = () => {
 
       // Minimal delay between batches
       await new Promise(resolve => setTimeout(resolve, 50));
+      setProcessedCount(processedLinksRef.current.size);
     }
 
     setIsAutoLoading(false);
@@ -299,6 +303,9 @@ export const ProductImageSearch = () => {
           .filter((url: string) => url.includes('jiomart.com/images/product'))
       )) as string[];
 
+      setTotalToProcess(jiomartLinks.length);
+      setProcessedCount(0);
+
       if (!jiomartLinks.length) {
         toast.error('No product images found');
         return;
@@ -309,6 +316,7 @@ export const ProductImageSearch = () => {
       try {
         const firstImages = await extractAllProductImages(firstLink);
         processedLinksRef.current.add(firstLink);
+        setProcessedCount(1);
 
         if (firstImages.length > 0) {
           // Filter for original images only
@@ -709,12 +717,21 @@ export const ProductImageSearch = () => {
           </div>
 
           <div className="flex items-center justify-between mt-3">
-            <div className="text-sm text-muted-foreground">
+            <div className="text-sm text-muted-foreground min-w-[240px]">
               {extractedImages.length > 0 && (
-                <>
-                  {extractedImages.length} Image{extractedImages.length !== 1 ? 's' : ''}
-                  {isAutoLoading && <span className="ml-2 animate-pulse">(Loading more...)</span>}
-                </>
+                <div className="flex flex-col gap-2">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="font-medium">{extractedImages.length} Found</span>
+                    {isAutoLoading && (
+                      <span className="text-muted-foreground">
+                        {processedCount}/{totalToProcess} Processed
+                      </span>
+                    )}
+                  </div>
+                  {isAutoLoading && totalToProcess > 0 && (
+                    <Progress value={(processedCount / totalToProcess) * 100} className="h-1.5" />
+                  )}
+                </div>
               )}
             </div>
             <div className="flex gap-2">
