@@ -681,6 +681,10 @@ export const ProductImageSearch = () => {
     setZoom(prev => Math.min(Math.max(prev + delta, 1), 5));
   };
 
+  const handleImageError = (urlToRemove: string) => {
+    setExtractedImages(prev => prev.filter(url => url !== urlToRemove));
+  };
+
   // ✅ Arrow navigation for desktop
   const goToPrevious = () => {
     if (selectedImageIndex !== null && selectedImageIndex > 0) {
@@ -753,9 +757,8 @@ export const ProductImageSearch = () => {
                 <div className="flex items-center gap-3">
                   <span className="font-medium tabular-nums">{extractedImages.length} Image{extractedImages.length !== 1 ? 's' : ''}</span>
                   {isAutoLoading && (
-                    <div className="flex items-center gap-2 text-xs bg-accent/50 px-2.5 py-1 rounded-full border">
+                    <div className="flex items-center justify-center p-1">
                       <CircularProgress value={totalToProcess > 0 ? (processedCount / totalToProcess) * 100 : 0} />
-                      <span className="font-medium tabular-nums">{processedCount}/{totalToProcess}</span>
                     </div>
                   )}
                 </div>
@@ -813,6 +816,7 @@ export const ProductImageSearch = () => {
                   alt={`Product ${index + 1}`}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
                   loading={index < 15 ? 'eager' : 'lazy'}
+                  onError={() => handleImageError(url)}
                 />
                 <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/50 to-transparent p-2">
                   <span className="text-white text-xs font-medium">{index + 1}</span>
