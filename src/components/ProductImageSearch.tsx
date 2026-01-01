@@ -473,7 +473,7 @@ export const ProductImageSearch = () => {
       await new Promise((resolve) => { img.onload = resolve; });
 
       const canvas = document.createElement('canvas');
-      const maxDimension = 800;
+      const maxDimension = 600;
       let width = img.width;
       let height = img.height;
 
@@ -493,7 +493,7 @@ export const ProductImageSearch = () => {
         ctx.drawImage(img, 0, 0, width, height);
       }
 
-      const compressedImage = canvas.toDataURL('image/jpeg', 0.7);
+      const compressedImage = canvas.toDataURL('image/jpeg', 0.5);
 
       const formData = new FormData();
       formData.append('base64Image', compressedImage);
@@ -804,7 +804,7 @@ export const ProductImageSearch = () => {
             {extractedImages.map((url, index) => (
               <div
                 key={`${url}-${index}`}
-                className="relative aspect-square rounded-lg overflow-hidden border hover:ring-2 hover:ring-primary transition-all cursor-pointer group"
+                className="relative aspect-square rounded-lg overflow-hidden border hover:ring-2 hover:ring-primary transition-all cursor-pointer group animate-[fadeIn_0.5s_ease-out]"
                 onClick={() => {
                   setSelectedImageIndex(index);
                   setZoom(1);
@@ -1092,6 +1092,10 @@ export const ProductImageSearch = () => {
             transform: translateY(100%);
             opacity: 0;
           }
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; transform: scale(0.95); }
+          to { opacity: 1; transform: scale(1); }
         }
       `}</style>
     </div>
