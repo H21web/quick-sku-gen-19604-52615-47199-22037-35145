@@ -94,6 +94,7 @@ export const ProductImageSearch = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const currentSearchIdRef = useRef('');
+  const thumbnailSetRef = useRef(false); // Track if we have set a "good" thumbnail
   const processedLinksRef = useRef<Set<string>>(new Set());
   const [apiKeyStatuses, setApiKeyStatuses] = useState<ApiKeyStatus[]>(() =>
     GOOGLE_API_KEYS.map(key => ({ key, exhausted: false, lastReset: Date.now() }))
@@ -298,7 +299,9 @@ export const ProductImageSearch = () => {
     setProductTitle('');
     setExtractedImages([]);
     setJiomartUrl('');
+    setJiomartUrl('');
     processedLinksRef.current.clear();
+    thumbnailSetRef.current = false;
 
     try {
       const query = `site:jiomart.com ${idToSearch}`;
@@ -368,45 +371,27 @@ export const ProductImageSearch = () => {
           return [...prev, url];
         });
 
-        // Intelligent thumbnail selection:
-        // 1. Prioritize 'product-images' over 'legal-images' or others.
-        // 2. If we already have a thumbnail, only overwrite it if the new one is BETTER (e.g. current is legal, new is product).
-
         const isProductImage = url.includes('product-images');
-        const isLegalImage = url.includes('legal-images');
 
-        // Retrieve current history item to check existing thumbnail
-        setSearchHistory(prev => {
-          const existingItem = prev.find(item => item.productId === idToSearch);
-          const currentThumbnail = existingItem?.thumbnail;
-          const currentIsProduct = currentThumbnail?.includes('product-images');
+        // Strategy: 
+        // 1. If we haven't set a thumbnail yet, set it (even if legal, as placeholder).
+        // 2. If we SET a "legal" thumbnail before, and now find a "product" one, OVERWRITE it.
+        // 3. If we already set a "product" thumbnail, DO NOT overwrite it (keep the first one).
 
-          let shouldUpdateThumbnail = false;
-
-          if (!currentThumbnail) {
-            shouldUpdateThumbnail = true;
-          } else if (!currentIsProduct && isProductImage) {
-            shouldUpdateThumbnail = true;
+        if (url && (url.includes('original') || url.includes('/original/'))) {
+          if (isProductImage) {
+            if (!thumbnailSetRef.current) {
+              saveToHistory(idToSearch, foundUrl, url);
+              thumbnailSetRef.current = true; // Lock it, we found a good one
+            }
+          } else {
+            // It's legal or other. Only use if we have NOTHING locked.
+            if (!thumbnailSetRef.current) {
+              // We can save it, but don't set 'thumbnailSetRef.current = true' 
+              // so it can be upgraded later.
+              saveToHistory(idToSearch, foundUrl, url);
+            }
           }
-
-          if (shouldUpdateThumbnail) {
-            // We need to call saveToHistory in the next tick or effectively here.
-            // Since safeToHistory is a callback using set state, we can just call it.
-            // BUT calling saveToHistory inside set state callback is bad.
-            // So we will just trigger the save outside.
-
-            return prev; // Don't modify state here, just inspect.
-          }
-          return prev;
-        });
-
-        // Helper to check and save
-        const currentHist = searchHistory.find(item => item.productId === idToSearch);
-        const currentThumb = currentHist?.thumbnail;
-        const currentThumbIsProduct = currentThumb?.includes('product-images');
-
-        if (!currentThumb || (!currentThumbIsProduct && isProductImage)) {
-          saveToHistory(idToSearch, foundUrl, url);
         }
       };
 
@@ -857,8 +842,8 @@ export const ProductImageSearch = () => {
 
 
         {productTitle && !loading && (
-          <div className="mb-4 animate-in fade-in slide-in-from-bottom-2 duration-700">
-            <h2 className="text-lg font-medium text-foreground/80">{productTitle}</h2>
+          <div className="mb-4 animate-in fade-in slide-in-from-bottom-2 duration-700 w-full overflow-hidden">
+            <h2 className="text-base font-medium text-foreground/80 truncate w-full" title={productTitle}>{productTitle}</h2>
           </div>
         )}
 
@@ -1068,7 +1053,7 @@ export const ProductImageSearch = () => {
 
       {/* History Dialog */}
       <Dialog open={showHistoryDialog} onOpenChange={setShowHistoryDialog}>
-        <DialogContent className="max-w-md max-h-[80vh] overflow-y-auto">
+        <DialogContent className="w-[90vw] max-w-md max-h-[80vh] overflow-y-auto rounded-xl">
           <DialogTitle>Search History</DialogTitle>
           <DialogDescription>Your recent product searches</DialogDescription>
 
