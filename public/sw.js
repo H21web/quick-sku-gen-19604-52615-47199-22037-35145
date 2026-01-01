@@ -1,4 +1,4 @@
-const CACHE_NAME = 'sku-gen-v1.2';
+const CACHE_NAME = 'sku-gen-v1.5';
 const urlsToCache = [
   '/',
   '/index.html',

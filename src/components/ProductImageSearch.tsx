@@ -238,8 +238,8 @@ export const ProductImageSearch = () => {
       });
     };
 
-    // Process all links simultaneously in batches of 4
-    const batchSize = 4;
+    // Process all links simultaneously in batches of 8 for faster loading
+    const batchSize = 8;
     const batches: string[][] = [];
 
     for (let i = 0; i < links.length; i += batchSize) {
@@ -368,8 +368,44 @@ export const ProductImageSearch = () => {
           return [...prev, url];
         });
 
-        // Update history thumbnail on first image found
-        if (url && (url.includes('original') || url.includes('/original/'))) {
+        // Intelligent thumbnail selection:
+        // 1. Prioritize 'product-images' over 'legal-images' or others.
+        // 2. If we already have a thumbnail, only overwrite it if the new one is BETTER (e.g. current is legal, new is product).
+
+        const isProductImage = url.includes('product-images');
+        const isLegalImage = url.includes('legal-images');
+
+        // Retrieve current history item to check existing thumbnail
+        setSearchHistory(prev => {
+          const existingItem = prev.find(item => item.productId === idToSearch);
+          const currentThumbnail = existingItem?.thumbnail;
+          const currentIsProduct = currentThumbnail?.includes('product-images');
+
+          let shouldUpdateThumbnail = false;
+
+          if (!currentThumbnail) {
+            shouldUpdateThumbnail = true;
+          } else if (!currentIsProduct && isProductImage) {
+            shouldUpdateThumbnail = true;
+          }
+
+          if (shouldUpdateThumbnail) {
+            // We need to call saveToHistory in the next tick or effectively here.
+            // Since safeToHistory is a callback using set state, we can just call it.
+            // BUT calling saveToHistory inside set state callback is bad.
+            // So we will just trigger the save outside.
+
+            return prev; // Don't modify state here, just inspect.
+          }
+          return prev;
+        });
+
+        // Helper to check and save
+        const currentHist = searchHistory.find(item => item.productId === idToSearch);
+        const currentThumb = currentHist?.thumbnail;
+        const currentThumbIsProduct = currentThumb?.includes('product-images');
+
+        if (!currentThumb || (!currentThumbIsProduct && isProductImage)) {
           saveToHistory(idToSearch, foundUrl, url);
         }
       };
@@ -1052,9 +1088,11 @@ export const ProductImageSearch = () => {
                       className="w-12 h-12 object-cover rounded flex-shrink-0"
                     />
                   )}
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-sm truncate text-foreground">{item.title || item.productId}</p>
-                    <p className="font-mono text-xs font-semibold text-muted-foreground">{item.productId}</p>
+                  <div className="flex-1 min-w-0 pr-2">
+                    <p className="font-medium text-sm truncate text-foreground" title={item.title || item.productId}>
+                      {item.title || item.productId}
+                    </p>
+                    <p className="font-mono text-xs font-semibold text-muted-foreground truncate">{item.productId}</p>
                     <p className="text-[10px] text-muted-foreground/70">
                       {new Date(item.timestamp).toLocaleString()}
                     </p>
