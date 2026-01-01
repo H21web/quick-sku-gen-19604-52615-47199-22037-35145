@@ -321,9 +321,13 @@ export const ProductImageSearch = () => {
 
         // Extract title
         let title = webData.items[0].title || '';
-        // Clean title (remove " - JioMart" or similar suffixes if commonly found, but simple display is fine for now)
-        // Common format: "Product Name at Best Price in India - JioMart"
-        title = title.split(' - JioMart')[0].split(' at Best Price')[0];
+        // Clean title
+        title = title
+          .replace(/^Buy\s+/i, '') // Remove 'Buy' at start
+          .replace(/\s+Online/i, '') // Remove 'Online'
+          .split(' - JioMart')[0]
+          .split(' at Best Price')[0]
+          .trim();
         setProductTitle(title);
       }
 
@@ -805,14 +809,14 @@ export const ProductImageSearch = () => {
         {(loading || (extractedImages.length === 0 && isAutoLoading)) && (
           <div className="flex flex-col items-center justify-center py-12">
             <Loader2 className="h-10 w-10 animate-spin text-primary mb-4" />
-            <p className="text-muted-foreground animate-pulse">Searching for high-quality images...</p>
+            <p className="text-muted-foreground animate-pulse">Loading product image...</p>
           </div>
         )}
 
 
         {productTitle && !loading && (
-          <div className="mb-4">
-            <h2 className="text-xl font-semibold text-foreground/80">{productTitle}</h2>
+          <div className="mb-4 animate-in fade-in slide-in-from-bottom-2 duration-700">
+            <h2 className="text-lg font-medium text-foreground/80">{productTitle}</h2>
           </div>
         )}
 
