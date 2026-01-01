@@ -76,6 +76,7 @@ export const ProductImageSearch = () => {
   const [isProcessingOCR, setIsProcessingOCR] = useState(false);
   const [detectedIDs, setDetectedIDs] = useState<string[]>([]);
   const [jiomartUrl, setJiomartUrl] = useState('');
+  const [productTitle, setProductTitle] = useState('');
   const [searchHistory, setSearchHistory] = useState<SearchHistoryItem[]>([]);
   const [showHistoryDialog, setShowHistoryDialog] = useState(false);
   const [isAutoLoading, setIsAutoLoading] = useState(false);
@@ -291,6 +292,7 @@ export const ProductImageSearch = () => {
     currentSearchIdRef.current = newSearchId;
 
     setLoading(true);
+    setProductTitle('');
     setExtractedImages([]);
     setJiomartUrl('');
     processedLinksRef.current.clear();
@@ -316,6 +318,13 @@ export const ProductImageSearch = () => {
       if (webData.items?.[0]?.link?.includes('jiomart.com')) {
         foundUrl = webData.items[0].link;
         setJiomartUrl(foundUrl);
+
+        // Extract title
+        let title = webData.items[0].title || '';
+        // Clean title (remove " - JioMart" or similar suffixes if commonly found, but simple display is fine for now)
+        // Common format: "Product Name at Best Price in India - JioMart"
+        title = title.split(' - JioMart')[0].split(' at Best Price')[0];
+        setProductTitle(title);
       }
 
       saveToHistory(idToSearch, foundUrl);
@@ -797,6 +806,13 @@ export const ProductImageSearch = () => {
           <div className="flex flex-col items-center justify-center py-12">
             <Loader2 className="h-10 w-10 animate-spin text-primary mb-4" />
             <p className="text-muted-foreground animate-pulse">Searching for high-quality images...</p>
+          </div>
+        )}
+
+
+        {productTitle && !loading && (
+          <div className="mb-4">
+            <h2 className="text-xl font-semibold text-foreground/80">{productTitle}</h2>
           </div>
         )}
 
