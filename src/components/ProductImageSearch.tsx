@@ -765,76 +765,75 @@ export const ProductImageSearch = () => {
 
   return (
     <div className="w-full min-h-screen bg-background flex flex-col">
-      {/* Sticky App Header */}
+      {/* Sticky Header (Original Layout Tweaked) */}
       <div className="sticky top-0 z-40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b shadow-sm">
-        <div className="w-full max-w-5xl mx-auto px-4 py-3 flex flex-col gap-3">
-          {/* Search Row */}
-          <div className="flex items-center gap-2">
+        <div className="max-w-7xl mx-auto px-4 py-3">
+          <div className="flex items-center gap-3">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Enter Product ID"
                 value={productId}
                 onChange={(e) => setProductId(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                className="h-11 pl-9 pr-10 rounded-xl bg-muted/50 border-transparent hover:bg-muted focus:bg-background transition-all"
+                className="h-11 pr-11 shadow-sm"
               />
-              {productId && (
-                <button
-                  onClick={() => setProductId('')}
-                  className="absolute right-10 top-1/2 -translate-y-1/2 p-1.5 text-muted-foreground hover:text-foreground"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              )}
               <button
                 onClick={startCamera}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 hover:bg-background rounded-lg text-primary transition-colors"
-                title="Scan"
+                className="absolute right-1 top-1/2 -translate-y-1/2 p-2 hover:bg-accent rounded-md transition-colors"
+                title="Scan product"
               >
-                <Scan className="h-4 w-4" />
+                <Scan className="h-5 w-5 text-muted-foreground" />
               </button>
             </div>
-            <Button onClick={() => handleSearch()} disabled={loading} className="h-11 px-6 rounded-xl font-medium shadow-none">
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Find'}
-            </Button>
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={() => setShowHistoryDialog(true)}
-              className="h-11 w-11 rounded-xl shadow-none shrink-0"
-            >
-              <History className="h-5 w-5 text-muted-foreground" />
+
+            <Button onClick={() => handleSearch()} disabled={loading} className="h-11 px-6 shadow-sm">
+              <Search className="h-4 w-4 mr-2" />
+              {loading ? 'Loading...' : 'Find'}
             </Button>
           </div>
 
-          {/* Status Bar */}
-          <div className="flex items-center justify-between px-1">
-            <div className="text-xs font-medium text-muted-foreground min-h-[1.25rem]">
+          <div className="flex items-center justify-between mt-3">
+            <div className="text-sm text-muted-foreground min-h-[20px]">
               {extractedImages.length > 0 && (
-                <span>{extractedImages.length} result{extractedImages.length !== 1 ? 's' : ''}</span>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2">
-              {isAutoLoading && (
-                <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 px-2 py-1 rounded-full">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  Loading...
+                <div className="flex items-center gap-3">
+                  <span className="font-medium tabular-nums">{extractedImages.length} Image{extractedImages.length !== 1 ? 's' : ''}</span>
+                  {isAutoLoading && (
+                    <div className="flex items-center justify-center p-1 bg-muted/50 rounded-full px-2">
+                      <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                      <span className="text-xs">Loading...</span>
+                    </div>
+                  )}
                 </div>
               )}
+            </div>
+            <div className="flex gap-2">
               {jiomartUrl && (
-                <a href={jiomartUrl} target="_blank" rel="noreferrer" className="text-xs font-medium text-primary flex items-center gap-1 hover:underline">
-                  View Product <ExternalLink className="h-3 w-3" />
-                </a>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => window.open(jiomartUrl, '_blank')}
+                  className="h-8 text-xs"
+                >
+                  <ExternalLink className="h-3 w-3 mr-1" />
+                  Open Product
+                </Button>
               )}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setShowHistoryDialog(true)}
+                className="h-8 text-xs"
+              >
+                <History className="h-3 w-3 mr-1" />
+                History
+              </Button>
             </div>
           </div>
         </div>
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 w-full max-w-5xl mx-auto p-4">
+      <div className="flex-1 w-full max-w-7xl mx-auto p-4">
         {!loading && extractedImages.length === 0 && !isAutoLoading && (
           <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
             <div className="bg-muted/50 p-6 rounded-full inline-flex">
