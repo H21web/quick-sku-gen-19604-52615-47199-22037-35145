@@ -768,30 +768,12 @@ export const ProductImageSearch = () => {
       {/* Sticky App Header */}
       <div className="sticky top-0 z-40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b shadow-sm">
         <div className="w-full max-w-5xl mx-auto px-4 py-3 flex flex-col gap-3">
-          {/* Top Row: Brand & Actions */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="h-8 w-8 bg-primary rounded-lg flex items-center justify-center">
-                <Scan className="h-5 w-5 text-primary-foreground" />
-              </div>
-              <h1 className="font-bold text-xl tracking-tight">SKU Gen</h1>
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setShowHistoryDialog(true)}
-              className="rounded-full hover:bg-muted"
-            >
-              <History className="h-5 w-5 text-muted-foreground" />
-            </Button>
-          </div>
-
           {/* Search Row */}
           <div className="flex items-center gap-2">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search ID"
+                placeholder="Enter Product ID"
                 value={productId}
                 onChange={(e) => setProductId(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
@@ -816,30 +798,38 @@ export const ProductImageSearch = () => {
             <Button onClick={() => handleSearch()} disabled={loading} className="h-11 px-6 rounded-xl font-medium shadow-none">
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Find'}
             </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={() => setShowHistoryDialog(true)}
+              className="h-11 w-11 rounded-xl shadow-none shrink-0"
+            >
+              <History className="h-5 w-5 text-muted-foreground" />
+            </Button>
           </div>
 
-          {/* Status Bar (Images found count) */}
-          {extractedImages.length > 0 && (
-            <div className="flex items-center justify-between px-1 pb-1">
-              <span className="text-xs font-medium text-muted-foreground">
-                {extractedImages.length} result{extractedImages.length !== 1 ? 's' : ''}
-              </span>
-
-              <div className="flex items-center gap-2">
-                {isAutoLoading && (
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 px-2 py-1 rounded-full">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    Loading more...
-                  </div>
-                )}
-                {jiomartUrl && (
-                  <a href={jiomartUrl} target="_blank" rel="noreferrer" className="text-xs font-medium text-primary flex items-center gap-1 hover:underline">
-                    View Product <ExternalLink className="h-3 w-3" />
-                  </a>
-                )}
-              </div>
+          {/* Status Bar */}
+          <div className="flex items-center justify-between px-1">
+            <div className="text-xs font-medium text-muted-foreground min-h-[1.25rem]">
+              {extractedImages.length > 0 && (
+                <span>{extractedImages.length} result{extractedImages.length !== 1 ? 's' : ''}</span>
+              )}
             </div>
-          )}
+
+            <div className="flex items-center gap-2">
+              {isAutoLoading && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 px-2 py-1 rounded-full">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Loading...
+                </div>
+              )}
+              {jiomartUrl && (
+                <a href={jiomartUrl} target="_blank" rel="noreferrer" className="text-xs font-medium text-primary flex items-center gap-1 hover:underline">
+                  View Product <ExternalLink className="h-3 w-3" />
+                </a>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 
