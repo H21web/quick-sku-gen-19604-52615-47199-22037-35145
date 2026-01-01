@@ -221,9 +221,18 @@ export const ProductImageSearch = () => {
     });
   }, []);
 
-  // ✅ FIXED: Simultaneous loading with proper deduplication
+  // ✅ FIXED: Simultaneous loading with proper deduplication and progressive updates
   const loadAllImagesSimultaneously = useCallback(async (links: string[], searchId: string) => {
     setIsAutoLoading(true);
+
+    const onImageFound = (url: string) => {
+      if (searchId !== currentSearchIdRef.current) return;
+
+      setExtractedImages(prev => {
+        if (prev.includes(url)) return prev;
+        return [...prev, url];
+      });
+    };
 
     // Process all links simultaneously in batches of 4
     const batchSize = 4;
@@ -236,43 +245,31 @@ export const ProductImageSearch = () => {
     for (const batch of batches) {
       if (searchId !== currentSearchIdRef.current) break;
 
-      const batchResults = await Promise.allSettled(
+      await Promise.allSettled(
         batch.map(async (link) => {
-          if (processedLinksRef.current.has(link)) return [];
+          if (processedLinksRef.current.has(link)) return;
 
           try {
-            const images = await Promise.race([
-              extractAllProductImages(link),
-              new Promise<string[]>((_, reject) =>
+            await Promise.race([
+              extractAllProductImages(link, onImageFound),
+              new Promise((_, reject) =>
                 setTimeout(() => reject(new Error('timeout')), 10000)
               )
             ]);
 
             processedLinksRef.current.add(link);
-            return Array.isArray(images) ? images : [];
           } catch (error) {
             processedLinksRef.current.add(link);
-            return [];
           }
         })
       );
 
-      const newImages = batchResults
-        .filter(r => r.status === 'fulfilled')
-        .flatMap(r => r.value);
-
-      if (newImages.length > 0 && searchId === currentSearchIdRef.current) {
-        setExtractedImages(prev => {
-          const combined = [...prev, ...newImages];
-          // Remove duplicates and enforce original quality
-          const unique = Array.from(new Set(combined));
-          return unique.filter(url => url.includes('/original/'));
-        });
-      }
+      // We don't need to manually merge images here anymore because the callback handles it.
+      // Just update the processed count.
+      setProcessedCount(processedLinksRef.current.size);
 
       // Minimal delay between batches
       await new Promise(resolve => setTimeout(resolve, 50));
-      setProcessedCount(processedLinksRef.current.size);
     }
 
     setIsAutoLoading(false);
@@ -342,27 +339,31 @@ export const ProductImageSearch = () => {
         return;
       }
 
-      // ✅ Load first link immediately for instant feedback
+      // ✅ Load first link immediately with progressive updates
       const firstLink = jiomartLinks[0];
+
+      const onImageFound = (url: string) => {
+        if (newSearchId !== currentSearchIdRef.current) return;
+        setExtractedImages(prev => {
+          if (prev.includes(url)) return prev;
+          return [...prev, url];
+        });
+
+        // Update history thumbnail on first image found
+        if (url && (url.includes('original') || url.includes('/original/'))) {
+          saveToHistory(idToSearch, foundUrl, url);
+        }
+      };
+
       try {
-        const firstImages = await extractAllProductImages(firstLink);
+        const firstImages = await extractAllProductImages(firstLink, onImageFound);
         processedLinksRef.current.add(firstLink);
         setProcessedCount(1);
 
         if (firstImages.length > 0) {
-          // Filter for original images only
-          const originalImages = firstImages.filter(url => url.includes('/original/'));
-
-          if (originalImages.length > 0) {
-            setExtractedImages(originalImages);
-            preloadImages(originalImages, 12);
-
-            // Update history thumbnail
-            setTimeout(() => {
-              saveToHistory(idToSearch, foundUrl, originalImages[0]);
-            }, 200);
-          }
+          preloadImages(firstImages, 12);
         }
+
       } catch (error) {
         processedLinksRef.current.add(firstLink);
       }

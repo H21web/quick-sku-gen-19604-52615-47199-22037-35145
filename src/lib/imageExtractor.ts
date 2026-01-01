@@ -43,13 +43,20 @@ const buildImageUrl = (
   return `${parts.baseUrl}/original/${parts.productId}/${parts.name}-${imageType}-${parts.productCode}-p${parts.pNumber}-${index}-${parts.timestamp}.jpg`;
 };
 
-export const extractAllProductImages = async (firstImageUrl: string): Promise<string[]> => {
+export const extractAllProductImages = async (
+  firstImageUrl: string,
+  onImageFound?: (url: string) => void
+): Promise<string[]> => {
   const parts = parseJiomartUrl(firstImageUrl);
 
   if (!parts) {
     console.warn('Invalid JioMart URL format, returning original URL as fallback');
     const exists = await checkImageExists(firstImageUrl);
-    return exists ? [firstImageUrl] : [];
+    if (exists) {
+      onImageFound?.(firstImageUrl);
+      return [firstImageUrl];
+    }
+    return [];
   }
 
   // Strategy: Check high-probability indices first (0-5) for both types
@@ -76,9 +83,17 @@ export const extractAllProductImages = async (firstImageUrl: string): Promise<st
     ...generateUrls('legal-images', BATCH_1_SIZE, BATCH_2_SIZE)
   ];
 
+  const checkAndNotify = async (url: string) => {
+    const exists = await checkImageExists(url);
+    if (exists) {
+      onImageFound?.(url);
+    }
+    return { url, exists };
+  };
+
   // Check priority URLs first
   const priorityResults = await Promise.all(
-    priorityUrls.map(async (url) => ({ url, exists: await checkImageExists(url) }))
+    priorityUrls.map(checkAndNotify)
   );
 
   let validImages = priorityResults.filter(r => r.exists).map(r => r.url);
@@ -97,7 +112,7 @@ export const extractAllProductImages = async (firstImageUrl: string): Promise<st
   // Actually, checking them all is safer for "completeness", but we can optimise by reducing the timeout for secondary checks?
 
   const secondaryResults = await Promise.all(
-    secondaryUrls.map(async (url) => ({ url, exists: await checkImageExists(url) }))
+    secondaryUrls.map(checkAndNotify)
   );
 
   validImages = [...validImages, ...secondaryResults.filter(r => r.exists).map(r => r.url)];
@@ -108,7 +123,7 @@ export const extractAllProductImages = async (firstImageUrl: string): Promise<st
     const fallbackUrls = generateUrls('product-images', 0, 6);
 
     const fallbackResults = await Promise.all(
-      fallbackUrls.map(async (url) => ({ url, exists: await checkImageExists(url) }))
+      fallbackUrls.map(checkAndNotify)
     );
     validImages.push(...fallbackResults.filter(r => r.exists).map(r => r.url));
   }
@@ -119,7 +134,10 @@ export const extractAllProductImages = async (firstImageUrl: string): Promise<st
 
   if (validImages.length === 0) {
     const exists = await checkImageExists(firstImageUrl);
-    if (exists) validImages.push(firstImageUrl);
+    if (exists) {
+      onImageFound?.(firstImageUrl);
+      validImages.push(firstImageUrl);
+    }
   }
 
   // Deduplicate strings just in case
