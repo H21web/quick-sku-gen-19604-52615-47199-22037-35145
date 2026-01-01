@@ -1051,9 +1051,8 @@ export const ProductImageSearch = () => {
         </DialogContent>
       </Dialog>
 
-      {/* History Dialog */}
       <Dialog open={showHistoryDialog} onOpenChange={setShowHistoryDialog}>
-        <DialogContent className="w-[90vw] max-w-md max-h-[80vh] overflow-y-auto rounded-xl">
+        <DialogContent className="w-[95vw] max-w-lg max-h-[85vh] overflow-y-auto rounded-xl p-4 sm:p-6">
           <DialogTitle>Search History</DialogTitle>
           <DialogDescription>Your recent product searches</DialogDescription>
 
@@ -1064,7 +1063,7 @@ export const ProductImageSearch = () => {
               {searchHistory.map((item) => (
                 <div
                   key={item.id}
-                  className="flex items-center gap-3 p-3 border rounded-lg hover:bg-accent cursor-pointer transition-colors"
+                  className="flex items-center gap-2 p-2 sm:gap-3 sm:p-3 border rounded-lg hover:bg-accent cursor-pointer transition-colors w-full overflow-hidden"
                 >
                   {item.thumbnail && (
                     <img
@@ -1073,13 +1072,13 @@ export const ProductImageSearch = () => {
                       className="w-12 h-12 object-cover rounded flex-shrink-0"
                     />
                   )}
-                  <div className="flex-1 min-w-0 pr-2">
-                    <p className="font-medium text-sm truncate text-foreground" title={item.title || item.productId}>
+                  <div className="flex-1 min-w-0 px-1">
+                    <p className="font-medium text-xs sm:text-sm truncate text-foreground leading-tight" title={item.title || item.productId}>
                       {item.title || item.productId}
                     </p>
-                    <p className="font-mono text-xs font-semibold text-muted-foreground truncate">{item.productId}</p>
+                    <p className="font-mono text-[10px] sm:text-xs font-semibold text-muted-foreground truncate">{item.productId}</p>
                     <p className="text-[10px] text-muted-foreground/70">
-                      {new Date(item.timestamp).toLocaleString()}
+                      {new Date(item.timestamp).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}
                     </p>
                   </div>
                   <div className="flex gap-1 flex-shrink-0">
