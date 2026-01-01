@@ -764,75 +764,100 @@ export const ProductImageSearch = () => {
   }, [extractedImages]);
 
   return (
-    <div className="w-full min-h-screen bg-background">
-      {/* Compact Header */}
+    <div className="w-full min-h-screen bg-background flex flex-col">
+      {/* Sticky App Header */}
       <div className="sticky top-0 z-40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 py-3">
-          <div className="flex items-center gap-3">
-            <div className="relative flex-1">
-              <Input
-                placeholder="Enter Product ID"
-                value={productId}
-                onChange={(e) => setProductId(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                className="h-11 pr-11"
-              />
-              <button
-                onClick={startCamera}
-                className="absolute right-1 top-1/2 -translate-y-1/2 p-2 hover:bg-accent rounded-md transition-colors"
-                title="Scan product"
-              >
-                <Scan className="h-5 w-5 text-muted-foreground" />
-              </button>
+        <div className="w-full max-w-5xl mx-auto px-4 py-3 flex flex-col gap-3">
+          {/* Top Row: Brand & Actions */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="h-8 w-8 bg-primary rounded-lg flex items-center justify-center">
+                <Scan className="h-5 w-5 text-primary-foreground" />
+              </div>
+              <h1 className="font-bold text-xl tracking-tight">SKU Gen</h1>
             </div>
-
-            <Button onClick={() => handleSearch()} disabled={loading} className="h-11 px-6">
-              <Search className="h-4 w-4 mr-2" />
-              {loading ? 'Loading...' : 'Find'}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setShowHistoryDialog(true)}
+              className="rounded-full hover:bg-muted"
+            >
+              <History className="h-5 w-5 text-muted-foreground" />
             </Button>
           </div>
 
-          <div className="flex items-center justify-between mt-3">
-            <div className="text-sm text-muted-foreground">
-              {extractedImages.length > 0 && (
-                <div className="flex items-center gap-3">
-                  <span className="font-medium tabular-nums">{extractedImages.length} Image{extractedImages.length !== 1 ? 's' : ''}</span>
-                  {isAutoLoading && (
-                    <div className="flex items-center justify-center p-1">
-                      <CircularProgress value={totalToProcess > 0 ? (processedCount / totalToProcess) * 100 : 0} />
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-            <div className="flex gap-2">
-              {jiomartUrl && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => window.open(jiomartUrl, '_blank')}
-                  className="h-8"
+          {/* Search Row */}
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search ID"
+                value={productId}
+                onChange={(e) => setProductId(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                className="h-11 pl-9 pr-10 rounded-xl bg-muted/50 border-transparent hover:bg-muted focus:bg-background transition-all"
+              />
+              {productId && (
+                <button
+                  onClick={() => setProductId('')}
+                  className="absolute right-10 top-1/2 -translate-y-1/2 p-1.5 text-muted-foreground hover:text-foreground"
                 >
-                  <ExternalLink className="h-3 w-3 mr-1" />
-                  Open Product
-                </Button>
+                  <X className="h-4 w-4" />
+                </button>
               )}
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setShowHistoryDialog(true)}
-                className="h-8"
+              <button
+                onClick={startCamera}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 hover:bg-background rounded-lg text-primary transition-colors"
+                title="Scan"
               >
-                <History className="h-3 w-3 mr-1" />
-                History
-              </Button>
+                <Scan className="h-4 w-4" />
+              </button>
             </div>
+            <Button onClick={() => handleSearch()} disabled={loading} className="h-11 px-6 rounded-xl font-medium shadow-none">
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Find'}
+            </Button>
           </div>
+
+          {/* Status Bar (Images found count) */}
+          {extractedImages.length > 0 && (
+            <div className="flex items-center justify-between px-1 pb-1">
+              <span className="text-xs font-medium text-muted-foreground">
+                {extractedImages.length} result{extractedImages.length !== 1 ? 's' : ''}
+              </span>
+
+              <div className="flex items-center gap-2">
+                {isAutoLoading && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 px-2 py-1 rounded-full">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Loading more...
+                  </div>
+                )}
+                {jiomartUrl && (
+                  <a href={jiomartUrl} target="_blank" rel="noreferrer" className="text-xs font-medium text-primary flex items-center gap-1 hover:underline">
+                    View Product <ExternalLink className="h-3 w-3" />
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-4 py-4">
+      {/* Main Content Area */}
+      <div className="flex-1 w-full max-w-5xl mx-auto p-4">
+        {!loading && extractedImages.length === 0 && !isAutoLoading && (
+          <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
+            <div className="bg-muted/50 p-6 rounded-full inline-flex">
+              <Search className="h-10 w-10 text-muted-foreground/40" />
+            </div>
+            <div className="max-w-xs space-y-1">
+              <h3 className="font-semibold text-lg">No products found</h3>
+              <p className="text-sm text-muted-foreground">
+                Enter a Product ID or scan a barcode to get started.
+              </p>
+            </div>
+          </div>
+        )}
         {(loading || (extractedImages.length === 0 && isAutoLoading)) && (
           <div className="flex flex-col items-center justify-center py-12">
             <Loader2 className="h-10 w-10 animate-spin text-primary mb-4" />
@@ -843,7 +868,7 @@ export const ProductImageSearch = () => {
 
         {productTitle && !loading && (
           <div className="mb-4 animate-in fade-in slide-in-from-bottom-2 duration-700 w-full overflow-hidden">
-            <h2 className="text-base font-medium text-foreground/80 truncate w-full" title={productTitle}>{productTitle}</h2>
+            <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">{productTitle}</h2>
           </div>
         )}
 
