@@ -25,6 +25,7 @@ interface SearchHistoryItem {
   timestamp: number;
   jiomartUrl?: string;
   thumbnail?: string;
+  title?: string;
 }
 
 interface ApiKeyStatus {
@@ -187,7 +188,7 @@ export const ProductImageSearch = () => {
     throw lastError || new Error('All API keys failed');
   };
 
-  const saveToHistory = useCallback((productId: string, jiomartUrl?: string, thumbnail?: string) => {
+  const saveToHistory = useCallback((productId: string, jiomartUrl?: string, thumbnail?: string, title?: string) => {
     setSearchHistory((prevHistory) => {
       const existingIndex = prevHistory.findIndex(item => item.productId === productId);
 
@@ -196,7 +197,8 @@ export const ProductImageSearch = () => {
           ...prevHistory[existingIndex],
           timestamp: Date.now(),
           jiomartUrl: jiomartUrl || prevHistory[existingIndex].jiomartUrl,
-          thumbnail: thumbnail || prevHistory[existingIndex].thumbnail
+          thumbnail: thumbnail || prevHistory[existingIndex].thumbnail,
+          title: title || prevHistory[existingIndex].title
         };
 
         const updatedHistory = [
@@ -212,7 +214,8 @@ export const ProductImageSearch = () => {
           productId,
           timestamp: Date.now(),
           jiomartUrl,
-          thumbnail
+          thumbnail,
+          title
         };
 
         const updatedHistory = [newHistoryItem, ...prevHistory].slice(0, 20);
@@ -327,11 +330,14 @@ export const ProductImageSearch = () => {
           .replace(/\s+Online/i, '') // Remove 'Online'
           .split(' - JioMart')[0]
           .split(' at Best Price')[0]
+          .split(' at Best Price')[0]
           .trim();
         setProductTitle(title);
+        // Save extracted title to history
+        saveToHistory(idToSearch, foundUrl, undefined, title);
+      } else {
+        saveToHistory(idToSearch, foundUrl);
       }
-
-      saveToHistory(idToSearch, foundUrl);
 
       if (!imageData.items?.length) {
         toast.error('No images found');
@@ -1047,8 +1053,9 @@ export const ProductImageSearch = () => {
                     />
                   )}
                   <div className="flex-1 min-w-0">
-                    <p className="font-mono text-sm font-semibold truncate">{item.productId}</p>
-                    <p className="text-xs text-muted-foreground">
+                    <p className="font-medium text-sm truncate text-foreground">{item.title || item.productId}</p>
+                    <p className="font-mono text-xs font-semibold text-muted-foreground">{item.productId}</p>
+                    <p className="text-[10px] text-muted-foreground/70">
                       {new Date(item.timestamp).toLocaleString()}
                     </p>
                   </div>
