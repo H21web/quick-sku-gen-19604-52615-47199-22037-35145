@@ -765,42 +765,42 @@ export const ProductImageSearch = () => {
 
   return (
     <div className="w-full min-h-screen bg-background flex flex-col">
-      {/* Sticky Header (Original Layout Tweaked) */}
+      {/* Sticky Header (Compact Layout) */}
       <div className="sticky top-0 z-40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 py-3">
-          <div className="flex items-center gap-3">
+        <div className="max-w-7xl mx-auto px-4 py-2">
+          <div className="flex items-center gap-2">
             <div className="relative flex-1">
               <Input
                 placeholder="Enter Product ID"
                 value={productId}
                 onChange={(e) => setProductId(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                className="h-11 pr-11 shadow-sm"
+                className="h-10 pr-10 shadow-sm"
               />
               <button
                 onClick={startCamera}
-                className="absolute right-1 top-1/2 -translate-y-1/2 p-2 hover:bg-accent rounded-md transition-colors"
+                className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 hover:bg-accent rounded-md transition-colors"
                 title="Scan product"
               >
-                <Scan className="h-5 w-5 text-muted-foreground" />
+                <Scan className="h-4 w-4 text-muted-foreground" />
               </button>
             </div>
 
-            <Button onClick={() => handleSearch()} disabled={loading} className="h-11 px-6 shadow-sm">
+            <Button onClick={() => handleSearch()} disabled={loading} className="h-10 px-5 shadow-sm">
               <Search className="h-4 w-4 mr-2" />
-              {loading ? 'Loading...' : 'Find'}
+              {loading ? '...' : 'Find'}
             </Button>
           </div>
 
-          <div className="flex items-center justify-between mt-3">
-            <div className="text-sm text-muted-foreground min-h-[20px]">
+          <div className="flex items-center justify-between mt-2">
+            <div className="text-sm text-muted-foreground min-h-[20px] flex items-center">
               {extractedImages.length > 0 && (
-                <div className="flex items-center gap-3">
-                  <span className="font-medium tabular-nums">{extractedImages.length} Image{extractedImages.length !== 1 ? 's' : ''}</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium tabular-nums text-xs">{extractedImages.length} Image{extractedImages.length !== 1 ? 's' : ''}</span>
                   {isAutoLoading && (
-                    <div className="flex items-center justify-center p-1 bg-muted/50 rounded-full px-2">
+                    <div className="flex items-center justify-center p-0.5 bg-muted/50 rounded-full px-2">
                       <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                      <span className="text-xs">Loading...</span>
+                      <span className="text-[10px]">Loading...</span>
                     </div>
                   )}
                 </div>
@@ -812,17 +812,17 @@ export const ProductImageSearch = () => {
                   size="sm"
                   variant="outline"
                   onClick={() => window.open(jiomartUrl, '_blank')}
-                  className="h-8 text-xs"
+                  className="h-7 text-xs px-2"
                 >
                   <ExternalLink className="h-3 w-3 mr-1" />
-                  Open Product
+                  View
                 </Button>
               )}
               <Button
                 size="sm"
                 variant="outline"
                 onClick={() => setShowHistoryDialog(true)}
-                className="h-8 text-xs"
+                className="h-7 text-xs px-2"
               >
                 <History className="h-3 w-3 mr-1" />
                 History
@@ -833,7 +833,7 @@ export const ProductImageSearch = () => {
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 w-full max-w-7xl mx-auto p-4">
+      <div className="flex-1 w-full max-w-7xl mx-auto p-4 pt-2">
         {!loading && extractedImages.length === 0 && !isAutoLoading && (
           <div className="flex flex-col items-center justify-center py-20 text-center space-y-4">
             <div className="bg-muted/50 p-6 rounded-full inline-flex">
