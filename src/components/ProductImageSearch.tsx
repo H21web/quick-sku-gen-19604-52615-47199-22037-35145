@@ -1052,75 +1052,85 @@ export const ProductImageSearch = () => {
       </Dialog>
 
       <Dialog open={showHistoryDialog} onOpenChange={setShowHistoryDialog}>
-        <DialogContent className="w-[95vw] max-w-lg max-h-[85vh] overflow-y-auto rounded-xl p-4 sm:p-6">
-          <DialogTitle>Search History</DialogTitle>
-          <DialogDescription>Your recent product searches</DialogDescription>
-
-          {searchHistory.length === 0 ? (
-            <p className="text-center text-muted-foreground py-8">No search history yet</p>
-          ) : (
-            <div className="space-y-2">
-              {searchHistory.map((item) => (
-                <div
-                  key={item.id}
-                  className="flex items-center gap-2 p-2 sm:gap-3 sm:p-3 border rounded-lg hover:bg-accent cursor-pointer transition-colors w-full overflow-hidden"
-                >
-                  {item.thumbnail && (
-                    <img
-                      src={item.thumbnail}
-                      alt={item.productId}
-                      className="w-12 h-12 object-cover rounded flex-shrink-0"
-                    />
-                  )}
-                  <div className="flex-1 min-w-0 px-1">
-                    <p className="font-medium text-xs sm:text-sm truncate text-foreground leading-tight" title={item.title || item.productId}>
-                      {item.title || item.productId}
-                    </p>
-                    <p className="font-mono text-[10px] sm:text-xs font-semibold text-muted-foreground truncate">{item.productId}</p>
-                    <p className="text-[10px] text-muted-foreground/70">
-                      {new Date(item.timestamp).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })}
-                    </p>
-                  </div>
-                  <div className="flex gap-1 flex-shrink-0">
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-8 w-8"
-                      onClick={() => {
-                        setProductId(item.productId);
-                        setShowHistoryDialog(false);
-                        handleSearch(item.productId);
-                      }}
-                    >
-                      <Search className="h-4 w-4" />
-                    </Button>
-                    {item.jiomartUrl && (
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-8 w-8"
-                        onClick={() => window.open(item.jiomartUrl, '_blank')}
-                      >
-                        <ExternalLink className="h-4 w-4" />
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              ))}
+        <DialogContent className="w-full h-full max-w-none sm:max-w-md sm:h-[85vh] sm:rounded-xl p-0 gap-0 overflow-hidden flex flex-col bg-background">
+          {/* Sticky Header */}
+          <div className="flex items-center justify-between p-4 border-b bg-background/95 backdrop-blur z-10 flex-shrink-0">
+            <div>
+              <DialogTitle className="text-lg font-semibold">Search History</DialogTitle>
+              <DialogDescription className="text-xs text-muted-foreground mt-0.5">Your recent scans & searches</DialogDescription>
             </div>
-          )}
+            <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" onClick={() => setShowHistoryDialog(false)}>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
 
+          {/* Scrollable Content */}
+          <div className="flex-1 overflow-y-auto">
+            {searchHistory.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full text-muted-foreground p-8 gap-2">
+                <History className="h-12 w-12 opacity-20" />
+                <p>No search history yet</p>
+              </div>
+            ) : (
+              <div className="divide-y">
+                {searchHistory.map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex items-center gap-3 p-4 hover:bg-accent/50 active:bg-accent cursor-pointer transition-colors w-full bg-card"
+                    onClick={() => {
+                      setProductId(item.productId);
+                      setShowHistoryDialog(false);
+                      handleSearch(item.productId);
+                    }}
+                  >
+                    <div className="relative h-14 w-14 flex-shrink-0 rounded-lg overflow-hidden bg-muted border">
+                      {item.thumbnail ? (
+                        <img
+                          src={item.thumbnail}
+                          alt={item.productId}
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <div className="h-full w-full flex items-center justify-center bg-muted">
+                          <Search className="h-5 w-5 text-muted-foreground/40" />
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-sm truncate text-foreground leading-tight mb-1" title={item.title || item.productId}>
+                        {item.title || item.productId}
+                      </p>
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <span className="font-mono bg-muted px-1.5 py-0.5 rounded text-[10px] tracking-wide">{item.productId}</span>
+                        <span className="w-1 h-1 rounded-full bg-muted-foreground/30" />
+                        <span className="text-[10px]">
+                          {new Date(item.timestamp).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex-shrink-0">
+                      <ChevronRight className="h-5 w-5 text-muted-foreground/30" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Sticky Footer */}
           {searchHistory.length > 0 && (
-            <div className="pt-3 border-t mt-3">
+            <div className="p-4 border-t bg-background flex-shrink-0">
               <Button
-                variant="destructive"
+                variant="outline"
                 onClick={() => {
                   setSearchHistory([]);
                   localStorage.removeItem('searchHistory');
                   toast.success('History cleared');
                 }}
-                className="w-full"
-                size="sm"
+                className="w-full text-destructive hover:text-destructive border-dashed"
+                size="default"
               >
                 Clear All History
               </Button>
