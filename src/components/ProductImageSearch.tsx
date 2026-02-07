@@ -82,9 +82,7 @@ export const ProductImageSearch = () => {
   const [showHistoryDialog, setShowHistoryDialog] = useState(false);
   const [isAutoLoading, setIsAutoLoading] = useState(false);
   const [showScanAnimation, setShowScanAnimation] = useState(false);
-  const [swiggyImages, setSwiggyImages] = useState<string[]>([]);
-  const [loadingSwiggy, setLoadingSwiggy] = useState(false);
-  const [showLoadMore, setShowLoadMore] = useState(false);
+
 
   // Pan/Zoom states
   const [zoom, setZoom] = useState(1);
@@ -311,8 +309,7 @@ export const ProductImageSearch = () => {
 
     setIsAutoLoading(false);
 
-    // Show Load More button after loading completes
-    setShowLoadMore(true);
+
   }, []);
 
   const handleSearch = useCallback(async (searchId?: string) => {
@@ -333,8 +330,7 @@ export const ProductImageSearch = () => {
     setLoading(true);
     setProductTitle('');
     setExtractedImages([]);
-    setSwiggyImages([]);
-    setShowLoadMore(false);
+
     setJiomartUrl('');
     processedLinksRef.current.clear();
     thumbnailSetRef.current = false;
@@ -466,82 +462,7 @@ export const ProductImageSearch = () => {
     }
   }, [productId, saveToHistory, getNextApiKey, markApiKeyExhausted, fetchWithRetry, loadAllImagesSimultaneously]);
 
-  const loadSwiggyImages = useCallback(async () => {
-    if (!productTitle) {
-      toast.error('Product title not available');
-      return;
-    }
 
-    if (!GOOGLE_SEARCH_ENGINE_ID) {
-      toast.error('Google Search Engine ID not configured');
-      return;
-    }
-
-    setLoadingSwiggy(true);
-    setShowLoadMore(false);
-
-    try {
-      // Search query: title + "barcode" keyword
-      const searchQuery = `${productTitle} barcode`;
-      console.log('🔍 Searching Google Images for:', searchQuery);
-      console.log('🎨 Filter: White color only');
-
-      const imageResponse = await fetchWithRetry((apiKey) =>
-        `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(searchQuery)}&searchType=image&imgColorType=white&num=10&fields=items(link)`
-      );
-
-      const imageData = await imageResponse.json();
-
-      console.log('📊 Image results:', imageData.items?.length || 0);
-
-      if (!imageData.items || imageData.items.length === 0) {
-        toast.info(`No white color images found for "${searchQuery}"`);
-        console.log('ℹ️ Try a different product');
-        setLoadingSwiggy(false);
-        return;
-      }
-
-      // Extract all image URLs
-      const allImages = imageData.items
-        .map((item: any) => item.link)
-        .filter((url: string) => url);
-
-      console.log('🔗 Found Image Links:');
-      allImages.forEach((img: string, index: number) => {
-        console.log(`   ${index + 1}. ${img}`);
-      });
-
-      // Remove duplicates from JioMart images
-      const uniqueImages = allImages.filter((url: string) => !extractedImages.includes(url));
-
-      console.log(`✅ Unique images (after removing JioMart duplicates): ${uniqueImages.length}`);
-
-      if (uniqueImages.length === 0) {
-        toast.info('All images already shown in JioMart results');
-      } else {
-        setSwiggyImages(uniqueImages);
-        toast.success(`Found ${uniqueImages.length} additional images`);
-
-        console.log('🎉 Displaying images:');
-        uniqueImages.forEach((img: string, index: number) => {
-          console.log(`   ${index + 1}. ${img}`);
-        });
-
-        // Preload images
-        preloadImages(uniqueImages, 8);
-      }
-
-    } catch (error: any) {
-      console.error('❌ Search error:', error);
-      if (error.message.includes('exhausted')) {
-        toast.error('All API keys exhausted. Please try again in an hour.');
-      } else {
-        toast.error('Failed to load additional images. Try again.');
-      }
-    } finally {
-      setLoadingSwiggy(false);
-    }
-  }, [productTitle, extractedImages, getNextApiKey, markApiKeyExhausted, fetchWithRetry]);
 
   const startCamera = async () => {
     try {
@@ -789,7 +710,7 @@ export const ProductImageSearch = () => {
       const deltaX = touch.clientX - swipeStartRef.current.x;
       const deltaY = touch.clientY - swipeStartRef.current.y;
       const deltaTime = Date.now() - swipeStartRef.current.time;
-      const totalImages = extractedImages.length + swiggyImages.length;
+      const totalImages = extractedImages.length;
 
       // Check for double-tap (within 300ms)
       const now = Date.now();
@@ -891,7 +812,7 @@ export const ProductImageSearch = () => {
   };
 
   const goToNext = () => {
-    const totalImages = extractedImages.length + swiggyImages.length;
+    const totalImages = extractedImages.length;
     if (selectedImageIndex !== null && selectedImageIndex < totalImages - 1) {
       setSelectedImageIndex(selectedImageIndex + 1);
       setZoom(1);
@@ -1029,75 +950,7 @@ export const ProductImageSearch = () => {
                 </div>
               ))}
             </div>
-
-            {/* Load More Button */}
-            {showLoadMore && !loadingSwiggy && swiggyImages.length === 0 && (
-              <div className="mt-6 flex justify-center animate-in fade-in slide-in-from-bottom-2 duration-500">
-                <Button
-                  onClick={loadSwiggyImages}
-                  size="lg"
-                  className="min-w-[200px] h-12 text-base font-medium shadow-lg hover:shadow-xl transition-all"
-                >
-                  <ExternalLink className="h-5 w-5 mr-2" />
-                  Load More from Swiggy
-                </Button>
-              </div>
-            )}
-
-            {/* Loading Swiggy State */}
-            {loadingSwiggy && (
-              <div className="mt-6 flex flex-col items-center justify-center py-8 animate-in fade-in duration-300">
-                <Loader2 className="h-8 w-8 animate-spin text-primary mb-3" />
-                <p className="text-sm text-muted-foreground">Searching Swiggy...</p>
-              </div>
-            )}
           </>
-        )}
-
-        {/* Swiggy Images Section */}
-        {swiggyImages.length > 0 && (
-          <div className="mt-8 animate-in fade-in slide-in-from-bottom-3 duration-700">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="h-px flex-1 bg-gradient-to-r from-transparent via-border to-transparent"></div>
-              <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 border border-primary/20">
-                <ExternalLink className="h-4 w-4 text-primary" />
-                <span className="text-sm font-semibold text-primary">More from Swiggy</span>
-              </div>
-              <div className="h-px flex-1 bg-gradient-to-r from-transparent via-border to-transparent"></div>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2 sm:gap-3">
-              {swiggyImages.map((url, index) => (
-                <div
-                  key={`swiggy-${url}-${index}`}
-                  className="relative aspect-square rounded-lg overflow-hidden border border-primary/30 hover:ring-2 hover:ring-primary transition-all cursor-pointer group animate-[fadeIn_0.5s_ease-out] bg-muted"
-                  onClick={() => {
-                    setSelectedImageIndex(extractedImages.length + index);
-                    setZoom(1);
-                    setPosition({ x: 0, y: 0 });
-                  }}
-                >
-                  <img
-                    src={url}
-                    alt={`Swiggy Product ${index + 1}`}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                    loading={index < 8 ? 'eager' : 'lazy'}
-                    onError={() => {
-                      setSwiggyImages(prev => prev.filter(u => u !== url));
-                    }}
-                  />
-                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-primary/80 to-transparent p-1.5 sm:p-2">
-                    <span className="text-white text-xs font-medium">{extractedImages.length + index + 1}</span>
-                  </div>
-                  <div className="absolute top-1 right-1">
-                    <div className="bg-primary/90 backdrop-blur-sm px-1.5 py-0.5 rounded text-[10px] font-bold text-white">
-                      S
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
         )}
       </div>
 
@@ -1116,7 +969,7 @@ export const ProductImageSearch = () => {
             onWheel={handleWheel}
           >
             <img
-              src={[...extractedImages, ...swiggyImages][selectedImageIndex]}
+              src={extractedImages[selectedImageIndex]}
               alt={`Product ${selectedImageIndex + 1}`}
               className="max-w-full max-h-full object-contain select-none"
               style={{
@@ -1152,7 +1005,7 @@ export const ProductImageSearch = () => {
             </button>
           )}
 
-          {!isMobile && selectedImageIndex < (extractedImages.length + swiggyImages.length - 1) && (
+          {!isMobile && selectedImageIndex < (extractedImages.length - 1) && (
             <button
               onClick={goToNext}
               className="absolute right-4 top-1/2 -translate-y-1/2 p-3 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-sm transition-all z-10"
@@ -1164,7 +1017,7 @@ export const ProductImageSearch = () => {
           {/* Counter */}
           <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 rounded-full bg-black/40 backdrop-blur-sm z-10">
             <span className="text-white text-sm font-medium">
-              {selectedImageIndex + 1} / {extractedImages.length + swiggyImages.length}
+              {selectedImageIndex + 1} / {extractedImages.length}
             </span>
           </div>
 
