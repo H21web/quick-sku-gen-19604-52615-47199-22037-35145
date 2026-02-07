@@ -484,11 +484,9 @@ export const ProductImageSearch = () => {
     try {
       console.log('🔍 Searching Swiggy for:', productTitle);
 
-      // Try multiple search strategies
+      // Simplified search strategy as requested
       const searchQueries = [
-        `site:instamart.swiggy.com ${productTitle}`,
-        `site:swiggy.com/instamart ${productTitle}`,
-        `swiggy instamart ${productTitle}`,
+        `site:swiggy.com ${productTitle}`
       ];
 
       const allSwiggyImages: string[] = [];
