@@ -586,44 +586,27 @@ export const ProductImageSearch = () => {
 
       console.log('📦 Total images found:', allSwiggyImages.length);
 
-      // Deduplicate and filter out images already in JioMart results
+      // Deduplicate only (no filtering)
       const uniqueSwiggyImages = Array.from(new Set(allSwiggyImages))
-        .filter(url => !extractedImages.includes(url))
-        .filter(url => {
-          // Additional filtering for valid image URLs
-          try {
-            new URL(url);
-            return url.match(/\.(jpg|jpeg|png|webp)/i) ||
-              url.includes('cloudinary') ||
-              url.includes('/image/');
-          } catch {
-            return false;
-          }
+        .filter(url => !extractedImages.includes(url)); // Only remove duplicates from JioMart
+
+      console.log('✨ Unique Swiggy images (after removing JioMart duplicates):', uniqueSwiggyImages.length);
+
+      if (uniqueSwiggyImages.length === 0) {
+        toast.info(`No images found on Swiggy for "${productTitle}"`);
+        console.log('ℹ️ Try a different product or check if it exists on Swiggy');
+      } else {
+        // Display ALL scraped images without filtering
+        setSwiggyImages(uniqueSwiggyImages);
+        toast.success(`Found ${uniqueSwiggyImages.length} images from Swiggy`);
+
+        console.log('🎉 Displaying all scraped images:');
+        uniqueSwiggyImages.forEach((img, index) => {
+          console.log(`   ${index + 1}. ${img}`);
         });
 
-      console.log('✨ Unique Swiggy images before dimension check:', uniqueSwiggyImages.length);
-
-      // Check dimensions for all images and filter for high quality (1000x1000+)
-      console.log('🔍 Checking image dimensions (minimum 1000x1000)...');
-      const dimensionChecks = await Promise.all(
-        uniqueSwiggyImages.map(url => checkImageDimensions(url))
-      );
-
-      const highQualityImages = dimensionChecks
-        .filter(result => result.isValid)
-        .map(result => result.url);
-
-      console.log(`✅ High-quality images (≥1000x1000): ${highQualityImages.length}/${uniqueSwiggyImages.length}`);
-
-      if (highQualityImages.length === 0) {
-        toast.info(`No high-quality images found on Swiggy for "${productTitle}"`);
-        console.log('ℹ️ All images were below 1000x1000 resolution. Try a different product.');
-      } else {
-        setSwiggyImages(highQualityImages);
-        toast.success(`Found ${highQualityImages.length} high-quality images from Swiggy`);
-
         // Preload first few Swiggy images
-        preloadImages(highQualityImages, 8);
+        preloadImages(uniqueSwiggyImages, 8);
       }
 
     } catch (error: any) {
