@@ -44,7 +44,12 @@ export const scrapeSwiggyImages = async (url: string): Promise<string[]> => {
             });
 
         // Deduplicate
-        return Array.from(new Set(imageUrls));
+        const uniqueImages = Array.from(new Set(imageUrls));
+
+        console.log('🔗 Found Image Links on Page:');
+        uniqueImages.forEach((img, index) => console.log(`   ${index + 1}. ${img}`));
+
+        return uniqueImages;
 
     } catch (error) {
         console.error('❌ Error scraping Swiggy page:', error);
