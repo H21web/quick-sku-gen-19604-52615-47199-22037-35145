@@ -193,6 +193,34 @@ export const ProductImageSearch = () => {
     throw lastError || new Error('All API keys failed');
   };
 
+  // Helper function to check if image meets minimum dimension requirements
+  const checkImageDimensions = (url: string): Promise<{ url: string; width: number; height: number; isValid: boolean }> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+
+      img.onload = () => {
+        const isValid = img.width >= 1000 && img.height >= 1000;
+        console.log(`📐 ${url.substring(0, 50)}... - ${img.width}x${img.height} - ${isValid ? '✅' : '❌'}`);
+        resolve({ url, width: img.width, height: img.height, isValid });
+      };
+
+      img.onerror = () => {
+        console.log(`❌ Failed to load: ${url.substring(0, 50)}...`);
+        resolve({ url, width: 0, height: 0, isValid: false });
+      };
+
+      // Set timeout to avoid hanging
+      setTimeout(() => {
+        if (img.width === 0) {
+          resolve({ url, width: 0, height: 0, isValid: false });
+        }
+      }, 5000);
+
+      img.src = url;
+    });
+  };
+
   const saveToHistory = useCallback((productId: string, jiomartUrl?: string, thumbnail?: string, title?: string) => {
     setSearchHistory((prevHistory) => {
       const existingIndex = prevHistory.findIndex(item => item.productId === productId);
@@ -554,17 +582,29 @@ export const ProductImageSearch = () => {
           }
         });
 
-      console.log('✨ Unique Swiggy images:', uniqueSwiggyImages.length);
+      console.log('✨ Unique Swiggy images before dimension check:', uniqueSwiggyImages.length);
 
-      if (uniqueSwiggyImages.length === 0) {
-        toast.info(`No images found on Swiggy for "${productTitle}"`);
-        console.log('ℹ️ Try searching for a different product or check if it exists on Swiggy Instamart');
+      // Check dimensions for all images and filter for high quality (1000x1000+)
+      console.log('🔍 Checking image dimensions (minimum 1000x1000)...');
+      const dimensionChecks = await Promise.all(
+        uniqueSwiggyImages.map(url => checkImageDimensions(url))
+      );
+
+      const highQualityImages = dimensionChecks
+        .filter(result => result.isValid)
+        .map(result => result.url);
+
+      console.log(`✅ High-quality images (≥1000x1000): ${highQualityImages.length}/${uniqueSwiggyImages.length}`);
+
+      if (highQualityImages.length === 0) {
+        toast.info(`No high-quality images found on Swiggy for "${productTitle}"`);
+        console.log('ℹ️ All images were below 1000x1000 resolution. Try a different product.');
       } else {
-        setSwiggyImages(uniqueSwiggyImages);
-        toast.success(`Found ${uniqueSwiggyImages.length} images from Swiggy`);
+        setSwiggyImages(highQualityImages);
+        toast.success(`Found ${highQualityImages.length} high-quality images from Swiggy`);
 
         // Preload first few Swiggy images
-        preloadImages(uniqueSwiggyImages, 8);
+        preloadImages(highQualityImages, 8);
       }
 
     } catch (error: any) {
