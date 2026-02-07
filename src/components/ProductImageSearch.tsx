@@ -5,7 +5,6 @@ import { Search, X, Scan, ExternalLink, History, Camera, ChevronLeft, ChevronRig
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
 import { toast } from 'sonner';
 import { extractAllProductImages, preloadImages } from '@/lib/imageExtractor';
-import { scrapeSwiggyImages } from '@/lib/swiggyScraper';
 import { GOOGLE_SEARCH_ENGINE_ID } from '@/lib/config';
 import { Skeleton } from './ui/skeleton';
 
@@ -482,139 +481,62 @@ export const ProductImageSearch = () => {
     setShowLoadMore(false);
 
     try {
-      console.log('🔍 Searching Swiggy for:', productTitle);
+      // Search query: title + "barcode" keyword
+      const searchQuery = `${productTitle} barcode`;
+      console.log('🔍 Searching Google Images for:', searchQuery);
+      console.log('🎨 Filter: White color only');
 
-      // Simplified search strategy as requested
-      const searchQueries = [
-        `site:swiggy.com ${productTitle}`
-      ];
+      const imageResponse = await fetchWithRetry((apiKey) =>
+        `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(searchQuery)}&searchType=image&imgColorType=white&num=10&fields=items(link)`
+      );
 
-      const allSwiggyImages: string[] = [];
+      const imageData = await imageResponse.json();
 
-      for (const query of searchQueries) {
-        try {
-          console.log('🔎 Trying query:', query);
+      console.log('📊 Image results:', imageData.items?.length || 0);
 
-          const [imageResponse, webResponse] = await Promise.all([
-            fetchWithRetry((apiKey) =>
-              `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&searchType=image&num=10&fields=items(link,image)`
-            ),
-            fetchWithRetry((apiKey) =>
-              `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&num=10&fields=items(link,title,snippet)`
-            )
-          ]);
-
-          const [imageData, webData] = await Promise.all([
-            imageResponse.json(),
-            webResponse.json()
-          ]);
-
-          console.log('📊 Image results:', imageData.items?.length || 0);
-          console.log('📊 Web results:', webData.items?.length || 0);
-
-          // Priority 1: Scrape first product page (Most reliable)
-          if (webData.items?.length) {
-            const firstProductPage = webData.items.find((item: any) =>
-              item.link.includes('swiggy.com') || item.link.includes('instamart')
-            );
-
-            if (firstProductPage) {
-              console.log('🎯 Found product page, scraping:', firstProductPage.link);
-              try {
-                const scrapedImages = await scrapeSwiggyImages(firstProductPage.link);
-                console.log(`📸 Scraped ${scrapedImages.length} images from product page`);
-
-                if (scrapedImages.length > 0) {
-                  allSwiggyImages.push(...scrapedImages);
-                }
-              } catch (err) {
-                console.error('❌ Failed to scrape product page:', err);
-              }
-            }
-          }
-
-          // Priority 2: Standard image search
-          if (imageData.items?.length) {
-            const swiggyImageLinks = imageData.items
-              .map((item: any) => item.link)
-              .filter((url: string) => {
-                const isSwiggy = url.includes('swiggy.com') ||
-                  url.includes('instamart') ||
-                  url.includes('res.cloudinary.com');
-                const isImage = url.match(/\.(jpg|jpeg|png|webp)/i) ||
-                  url.includes('/image/') ||
-                  url.includes('cloudinary');
-                return isSwiggy && isImage;
-              });
-
-            console.log('✅ Found image URLs from search:', swiggyImageLinks.length);
-            allSwiggyImages.push(...swiggyImageLinks);
-          }
-
-          // Priority 3: Extract from other web pages (Fallback)
-          if (webData.items?.length) {
-            const remainingWebLinks = webData.items
-              .slice(1, 4) // Skip first one as we already tried scraping it
-              .map((item: any) => item.link)
-              .filter((url: string) =>
-                url.includes('swiggy.com') || url.includes('instamart')
-              );
-
-            for (const link of remainingWebLinks) {
-              try {
-                // Use new scraper instead of old text extractor
-                const scraped = await scrapeSwiggyImages(link);
-                if (scraped.length > 0) {
-                  allSwiggyImages.push(...scraped);
-                }
-              } catch (error) {
-                // Ignore silent failures on fallback pages
-              }
-            }
-          }
-
-          // If we found images, break early
-          if (allSwiggyImages.length > 0) {
-            console.log('✅ Found images, stopping search');
-            break;
-          }
-        } catch (error) {
-          console.error('❌ Query failed:', query, error);
-          // Continue to next query
-        }
+      if (!imageData.items || imageData.items.length === 0) {
+        toast.info(`No white color images found for "${searchQuery}"`);
+        console.log('ℹ️ Try a different product');
+        setLoadingSwiggy(false);
+        return;
       }
 
-      console.log('📦 Total images found:', allSwiggyImages.length);
+      // Extract all image URLs
+      const allImages = imageData.items
+        .map((item: any) => item.link)
+        .filter((url: string) => url);
 
-      // Deduplicate only (no filtering)
-      const uniqueSwiggyImages = Array.from(new Set(allSwiggyImages))
-        .filter(url => !extractedImages.includes(url)); // Only remove duplicates from JioMart
+      console.log('🔗 Found Image Links:');
+      allImages.forEach((img: string, index: number) => {
+        console.log(`   ${index + 1}. ${img}`);
+      });
 
-      console.log('✨ Unique Swiggy images (after removing JioMart duplicates):', uniqueSwiggyImages.length);
+      // Remove duplicates from JioMart images
+      const uniqueImages = allImages.filter((url: string) => !extractedImages.includes(url));
 
-      if (uniqueSwiggyImages.length === 0) {
-        toast.info(`No images found on Swiggy for "${productTitle}"`);
-        console.log('ℹ️ Try a different product or check if it exists on Swiggy');
+      console.log(`✅ Unique images (after removing JioMart duplicates): ${uniqueImages.length}`);
+
+      if (uniqueImages.length === 0) {
+        toast.info('All images already shown in JioMart results');
       } else {
-        // Display ALL scraped images without filtering
-        setSwiggyImages(uniqueSwiggyImages);
-        toast.success(`Found ${uniqueSwiggyImages.length} images from Swiggy`);
+        setSwiggyImages(uniqueImages);
+        toast.success(`Found ${uniqueImages.length} additional images`);
 
-        console.log('🎉 Displaying all scraped images:');
-        uniqueSwiggyImages.forEach((img, index) => {
+        console.log('🎉 Displaying images:');
+        uniqueImages.forEach((img: string, index: number) => {
           console.log(`   ${index + 1}. ${img}`);
         });
 
-        // Preload first few Swiggy images
-        preloadImages(uniqueSwiggyImages, 8);
+        // Preload images
+        preloadImages(uniqueImages, 8);
       }
 
     } catch (error: any) {
-      console.error('❌ Swiggy search error:', error);
+      console.error('❌ Search error:', error);
       if (error.message.includes('exhausted')) {
         toast.error('All API keys exhausted. Please try again in an hour.');
       } else {
-        toast.error('Failed to load Swiggy images. Try again.');
+        toast.error('Failed to load additional images. Try again.');
       }
     } finally {
       setLoadingSwiggy(false);
