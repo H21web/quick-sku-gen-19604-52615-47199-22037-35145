@@ -5,6 +5,7 @@ import { Search, X, Scan, ExternalLink, History, Camera, ChevronLeft, ChevronRig
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
 import { toast } from 'sonner';
 import { extractAllProductImages, preloadImages } from '@/lib/imageExtractor';
+import { scrapeSwiggyImages } from '@/lib/swiggyScraper';
 import { GOOGLE_SEARCH_ENGINE_ID } from '@/lib/config';
 import { Skeleton } from './ui/skeleton';
 
@@ -513,7 +514,28 @@ export const ProductImageSearch = () => {
           console.log('📊 Image results:', imageData.items?.length || 0);
           console.log('📊 Web results:', webData.items?.length || 0);
 
-          // Get images from image search - be more permissive
+          // Priority 1: Scrape first product page (Most reliable)
+          if (webData.items?.length) {
+            const firstProductPage = webData.items.find((item: any) =>
+              item.link.includes('swiggy.com') || item.link.includes('instamart')
+            );
+
+            if (firstProductPage) {
+              console.log('🎯 Found product page, scraping:', firstProductPage.link);
+              try {
+                const scrapedImages = await scrapeSwiggyImages(firstProductPage.link);
+                console.log(`📸 Scraped ${scrapedImages.length} images from product page`);
+
+                if (scrapedImages.length > 0) {
+                  allSwiggyImages.push(...scrapedImages);
+                }
+              } catch (err) {
+                console.error('❌ Failed to scrape product page:', err);
+              }
+            }
+          }
+
+          // Priority 2: Standard image search
           if (imageData.items?.length) {
             const swiggyImageLinks = imageData.items
               .map((item: any) => item.link)
@@ -527,29 +549,28 @@ export const ProductImageSearch = () => {
                 return isSwiggy && isImage;
               });
 
-            console.log('✅ Found image URLs:', swiggyImageLinks.length);
+            console.log('✅ Found image URLs from search:', swiggyImageLinks.length);
             allSwiggyImages.push(...swiggyImageLinks);
           }
 
-          // Extract images from web pages
+          // Priority 3: Extract from other web pages (Fallback)
           if (webData.items?.length) {
-            console.log('🌐 Processing web pages...');
-            const webLinks = webData.items
+            const remainingWebLinks = webData.items
+              .slice(1, 4) // Skip first one as we already tried scraping it
               .map((item: any) => item.link)
               .filter((url: string) =>
                 url.includes('swiggy.com') || url.includes('instamart')
               );
 
-            console.log('🔗 Web links to process:', webLinks.length);
-
-            for (const link of webLinks.slice(0, 5)) {
+            for (const link of remainingWebLinks) {
               try {
-                console.log('📄 Extracting from:', link);
-                const extractedFromPage = await extractAllProductImages(link, () => { });
-                console.log('📸 Extracted images:', extractedFromPage.length);
-                allSwiggyImages.push(...extractedFromPage);
+                // Use new scraper instead of old text extractor
+                const scraped = await scrapeSwiggyImages(link);
+                if (scraped.length > 0) {
+                  allSwiggyImages.push(...scraped);
+                }
               } catch (error) {
-                console.error('❌ Error extracting from:', link, error);
+                // Ignore silent failures on fallback pages
               }
             }
           }
