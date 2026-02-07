@@ -453,57 +453,112 @@ export const ProductImageSearch = () => {
     setShowLoadMore(false);
 
     try {
-      const query = `site:swiggy.com ${productTitle}`;
+      console.log('🔍 Searching Swiggy for:', productTitle);
 
-      const [imageResponse, webResponse] = await Promise.all([
-        fetchWithRetry((apiKey) =>
-          `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&searchType=image&num=10&fields=items(link)`
-        ),
-        fetchWithRetry((apiKey) =>
-          `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&num=5&fields=items(link)`
-        )
-      ]);
-
-      const [imageData, webData] = await Promise.all([
-        imageResponse.json(),
-        webResponse.json()
-      ]);
+      // Try multiple search strategies
+      const searchQueries = [
+        `site:instamart.swiggy.com ${productTitle}`,
+        `site:swiggy.com/instamart ${productTitle}`,
+        `swiggy instamart ${productTitle}`,
+      ];
 
       const allSwiggyImages: string[] = [];
 
-      // Get images from image search
-      if (imageData.items?.length) {
-        const swiggyImageLinks = imageData.items
-          .map((item: any) => item.link)
-          .filter((url: string) =>
-            url.includes('swiggy.com') &&
-            (url.includes('/image/upload/') || url.includes('res.cloudinary.com'))
-          );
-        allSwiggyImages.push(...swiggyImageLinks);
-      }
+      for (const query of searchQueries) {
+        try {
+          console.log('🔎 Trying query:', query);
 
-      // Extract images from web pages
-      if (webData.items?.length) {
-        const webLinks = webData.items
-          .map((item: any) => item.link)
-          .filter((url: string) => url.includes('swiggy.com'));
+          const [imageResponse, webResponse] = await Promise.all([
+            fetchWithRetry((apiKey) =>
+              `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&searchType=image&num=10&fields=items(link,image)`
+            ),
+            fetchWithRetry((apiKey) =>
+              `https://www.googleapis.com/customsearch/v1?key=${apiKey}&cx=${GOOGLE_SEARCH_ENGINE_ID}&q=${encodeURIComponent(query)}&num=10&fields=items(link,title,snippet)`
+            )
+          ]);
 
-        for (const link of webLinks.slice(0, 3)) {
-          try {
-            const extractedFromPage = await extractAllProductImages(link, () => { });
-            allSwiggyImages.push(...extractedFromPage);
-          } catch (error) {
-            console.error('Error extracting from Swiggy page:', error);
+          const [imageData, webData] = await Promise.all([
+            imageResponse.json(),
+            webResponse.json()
+          ]);
+
+          console.log('📊 Image results:', imageData.items?.length || 0);
+          console.log('📊 Web results:', webData.items?.length || 0);
+
+          // Get images from image search - be more permissive
+          if (imageData.items?.length) {
+            const swiggyImageLinks = imageData.items
+              .map((item: any) => item.link)
+              .filter((url: string) => {
+                const isSwiggy = url.includes('swiggy.com') ||
+                  url.includes('instamart') ||
+                  url.includes('res.cloudinary.com');
+                const isImage = url.match(/\.(jpg|jpeg|png|webp)/i) ||
+                  url.includes('/image/') ||
+                  url.includes('cloudinary');
+                return isSwiggy && isImage;
+              });
+
+            console.log('✅ Found image URLs:', swiggyImageLinks.length);
+            allSwiggyImages.push(...swiggyImageLinks);
           }
+
+          // Extract images from web pages
+          if (webData.items?.length) {
+            console.log('🌐 Processing web pages...');
+            const webLinks = webData.items
+              .map((item: any) => item.link)
+              .filter((url: string) =>
+                url.includes('swiggy.com') || url.includes('instamart')
+              );
+
+            console.log('🔗 Web links to process:', webLinks.length);
+
+            for (const link of webLinks.slice(0, 5)) {
+              try {
+                console.log('📄 Extracting from:', link);
+                const extractedFromPage = await extractAllProductImages(link, () => { });
+                console.log('📸 Extracted images:', extractedFromPage.length);
+                allSwiggyImages.push(...extractedFromPage);
+              } catch (error) {
+                console.error('❌ Error extracting from:', link, error);
+              }
+            }
+          }
+
+          // If we found images, break early
+          if (allSwiggyImages.length > 0) {
+            console.log('✅ Found images, stopping search');
+            break;
+          }
+        } catch (error) {
+          console.error('❌ Query failed:', query, error);
+          // Continue to next query
         }
       }
 
+      console.log('📦 Total images found:', allSwiggyImages.length);
+
       // Deduplicate and filter out images already in JioMart results
       const uniqueSwiggyImages = Array.from(new Set(allSwiggyImages))
-        .filter(url => !extractedImages.includes(url));
+        .filter(url => !extractedImages.includes(url))
+        .filter(url => {
+          // Additional filtering for valid image URLs
+          try {
+            new URL(url);
+            return url.match(/\.(jpg|jpeg|png|webp)/i) ||
+              url.includes('cloudinary') ||
+              url.includes('/image/');
+          } catch {
+            return false;
+          }
+        });
+
+      console.log('✨ Unique Swiggy images:', uniqueSwiggyImages.length);
 
       if (uniqueSwiggyImages.length === 0) {
-        toast.info('No additional images found on Swiggy');
+        toast.info(`No images found on Swiggy for "${productTitle}"`);
+        console.log('ℹ️ Try searching for a different product or check if it exists on Swiggy Instamart');
       } else {
         setSwiggyImages(uniqueSwiggyImages);
         toast.success(`Found ${uniqueSwiggyImages.length} images from Swiggy`);
@@ -513,7 +568,7 @@ export const ProductImageSearch = () => {
       }
 
     } catch (error: any) {
-      console.error('Swiggy search error:', error);
+      console.error('❌ Swiggy search error:', error);
       if (error.message.includes('exhausted')) {
         toast.error('All API keys exhausted. Please try again in an hour.');
       } else {
