@@ -93,6 +93,7 @@ export const ProductImageSearch = () => {
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const touchStartRef = useRef<{ distance: number; zoom: number; x: number; y: number } | null>(null);
   const swipeStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
+  const lastTapRef = useRef<number>(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -282,11 +283,9 @@ export const ProductImageSearch = () => {
 
     setIsAutoLoading(false);
 
-    // Show Load More button if we have a product title and haven't loaded Swiggy images yet
-    if (productTitle && swiggyImages.length === 0) {
-      setShowLoadMore(true);
-    }
-  }, [productTitle, swiggyImages.length]);
+    // Show Load More button after loading completes
+    setShowLoadMore(true);
+  }, []);
 
   const handleSearch = useCallback(async (searchId?: string) => {
     const idToSearch = searchId || productId;
@@ -773,6 +772,28 @@ export const ProductImageSearch = () => {
       const deltaTime = Date.now() - swipeStartRef.current.time;
       const totalImages = extractedImages.length + swiggyImages.length;
 
+      // Check for double-tap (within 300ms)
+      const now = Date.now();
+      const timeSinceLastTap = now - lastTapRef.current;
+
+      if (timeSinceLastTap < 300 && timeSinceLastTap > 0) {
+        // Double tap detected - toggle zoom
+        if (zoom === 1) {
+          setZoom(2.5);
+        } else {
+          setZoom(1);
+          setPosition({ x: 0, y: 0 });
+        }
+        lastTapRef.current = 0; // Reset to prevent triple-tap
+        touchStartRef.current = null;
+        swipeStartRef.current = null;
+        setIsDragging(false);
+        return;
+      }
+
+      lastTapRef.current = now;
+
+      // Handle swipe navigation (only if not a tap)
       if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 50 && deltaTime < 300) {
         if (deltaX > 0 && selectedImageIndex !== null && selectedImageIndex > 0) {
           setSelectedImageIndex(selectedImageIndex - 1);
@@ -784,6 +805,25 @@ export const ProductImageSearch = () => {
           setPosition({ x: 0, y: 0 });
         }
       }
+    }
+
+    // Handle double-tap when zoomed in
+    if (zoom > 1 && e.changedTouches.length === 1) {
+      const now = Date.now();
+      const timeSinceLastTap = now - lastTapRef.current;
+
+      if (timeSinceLastTap < 300 && timeSinceLastTap > 0) {
+        // Double tap while zoomed - zoom out
+        setZoom(1);
+        setPosition({ x: 0, y: 0 });
+        lastTapRef.current = 0;
+        touchStartRef.current = null;
+        swipeStartRef.current = null;
+        setIsDragging(false);
+        return;
+      }
+
+      lastTapRef.current = now;
     }
 
     touchStartRef.current = null;
@@ -1063,7 +1103,7 @@ export const ProductImageSearch = () => {
               style={{
                 transform: `scale(${zoom}) translate(${position.x / zoom}px, ${position.y / zoom}px)`,
                 cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default',
-                transition: isDragging ? 'none' : 'transform 0.2s ease-out',
+                transition: isDragging ? 'none' : 'transform 0.3s ease-out',
                 touchAction: 'none',
                 userSelect: 'none'
               }}
